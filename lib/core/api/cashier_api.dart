@@ -36,15 +36,20 @@ final dioProvider = Provider<Dio>((ref) {
         final token = ref.read(authTokenProvider);
         final workspaceId = ref.read(workspaceIdProvider);
         final deviceId = ref.read(deviceIdHeaderProvider);
-        if (token != null &&
-            token.isNotEmpty &&
-            (token.startsWith('standalone:') || token == 'local-offline')) {
+        // Hard offline: reject every outbound API call.
+        if (AppConfig.offlineOnly ||
+            (token != null &&
+                token.isNotEmpty &&
+                (token.startsWith('standalone:') ||
+                    token == 'local-offline'))) {
           handler.reject(
             DioException(
               requestOptions: options,
               type: DioExceptionType.connectionError,
-              error: 'standalone_mode_no_network',
-              message: 'الوضع المحلي لا يتصل بـ Laravel.',
+              error: 'offline_only_no_network',
+              message: AppConfig.offlineOnly
+                  ? 'التطبيق يعمل أوفلاين بالكامل — لا اتصال بالخادم.'
+                  : 'الوضع المحلي لا يتصل بـ Laravel.',
             ),
           );
           return;

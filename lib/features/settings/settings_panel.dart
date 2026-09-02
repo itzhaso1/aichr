@@ -549,13 +549,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'إعدادات الكاشير (Laravel)',
+                'إعدادات الكاشير المحلية',
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 6),
               Text(
                 canManage
-                    ? 'تُحفظ عبر PATCH /settings/pos'
+                    ? 'تُحفظ محلياً على هذا الجهاز (بدون خادم)'
                     : 'عرض فقط — تحتاج menu.manage للتعديل',
                 style: const TextStyle(fontSize: 12, color: HasimColors.muted),
               ),

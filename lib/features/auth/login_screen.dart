@@ -2,16 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
-import '../../core/api/cashier_api.dart';
-import '../../core/auth/auth_controller.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
+/// Offline-only entry: local PIN or first-time standalone store setup.
+/// No email / Google / Laravel login.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -20,39 +19,17 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _identifier = TextEditingController();
-  final _password = TextEditingController();
-  var _obscure = true;
   var _loading = false;
-  var _googleBusy = false;
   String? _error;
 
   @override
-  void dispose() {
-    _identifier.dispose();
-    _password.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      await ref
-          .read(authControllerProvider.notifier)
-          .login(_identifier.text.trim(), _password.text);
-    } catch (e) {
-      setState(() {
-        _error = e is ApiException ? e.message : 'تعذر تسجيل الدخول.';
-      });
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _enterLocal());
   }
 
   Future<void> _enterLocal() async {
+    if (_loading) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -61,9 +38,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final store = await ref.read(localAuthServiceProvider).anyStore();
       if (!mounted) return;
       if (store == null) {
-        context.push('/standalone-setup');
+        context.go('/standalone-setup');
       } else {
-        context.push('/pin');
+        context.go('/pin');
       }
     } catch (e) {
       if (!mounted) return;
@@ -73,59 +50,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  Future<void> _google() async {
-    setState(() {
-      _googleBusy = true;
-      _error = null;
-    });
-    try {
-      final google = GoogleSignIn(scopes: const ['email', 'profile']);
-      final account = await google.signIn();
-      if (account == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('تم إلغاء تسجيل الدخول عبر Google.')),
-          );
-        }
-        return;
-      }
-      final auth = await account.authentication;
-      final token = auth.accessToken ?? auth.idToken;
-      if (token == null || token.isEmpty) {
-        if (mounted) {
-          setState(() => _error = 'يحتاج إعداد Google على هذا الجهاز.');
-        }
-        return;
-      }
-      await ref
-          .read(authControllerProvider.notifier)
-          .socialLogin(provider: 'google', accessToken: token);
-    } catch (e) {
-      if (!mounted) return;
-      final msg = e.toString().toLowerCase();
-      final needsSetup =
-          msg.contains('client') ||
-          msg.contains('platform') ||
-          msg.contains('missing') ||
-          msg.contains('not been configured') ||
-          msg.contains('sign_in_failed') ||
-          msg.contains('10:') ||
-          msg.contains('12500');
-      setState(() {
-        _error = e is ApiException
-            ? e.message
-            : (needsSetup
-                  ? 'يحتاج إعداد Google على هذا الجهاز.'
-                  : 'تعذر تسجيل الدخول عبر Google.');
-      });
-    } finally {
-      if (mounted) setState(() => _googleBusy = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final busy = _loading || _googleBusy;
     return Scaffold(
       body: DecoratedBox(
         decoration: const BoxDecoration(
@@ -177,7 +103,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'كاشير حاسم',
+                            'كاشير حاسم — أوفلاين بالكامل',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
@@ -192,56 +118,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          'مرحبًا بك في حاسم',
+                          'تشغيل محلي بدون إنترنت',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'سجّل الدخول بنفس حساب مساحة العمل',
+                          'لا يوجد اتصال بالخادم أو مزامنة. البيانات تُحفظ على هذا الجهاز فقط.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 16),
-                        TextField(
-                          controller: _identifier,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          enabled: !busy,
-                          decoration: const InputDecoration(
-                            labelText: 'البريد الإلكتروني أو الجوال',
-                            prefixIcon: Icon(Icons.person_outline),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _password,
-                          obscureText: _obscure,
-                          enabled: !busy,
-                          onSubmitted: (_) => busy ? null : _submit(),
-                          decoration: InputDecoration(
-                            labelText: 'كلمة المرور',
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            suffixIcon: IconButton(
-                              onPressed: () =>
-                                  setState(() => _obscure = !_obscure),
-                              icon: Icon(
-                                _obscure
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: TextButton(
-                            onPressed: busy
-                                ? null
-                                : () => context.push('/forgot-password'),
-                            child: const Text('نسيت كلمة المرور؟'),
-                          ),
-                        ),
                         if (_error != null) ...[
-                          const SizedBox(height: 4),
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
@@ -262,11 +148,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 12),
                         ],
                         SizedBox(
                           height: 48,
-                          child: FilledButton(
+                          child: FilledButton.icon(
                             style: FilledButton.styleFrom(
                               backgroundColor: HasimColors.brand,
                               shape: RoundedRectangleBorder(
@@ -275,8 +161,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ),
                               ),
                             ),
-                            onPressed: busy ? null : _submit,
-                            child: _loading
+                            onPressed: _loading ? null : _enterLocal,
+                            icon: _loading
                                 ? const SizedBox(
                                     width: 20,
                                     height: 20,
@@ -285,64 +171,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       color: Colors.white,
                                     ),
                                   )
-                                : const Text('تسجيل الدخول'),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 48,
-                          child: OutlinedButton.icon(
-                            onPressed: busy ? null : _enterLocal,
-                            icon: const Icon(Icons.storefront_outlined),
-                            label: const Text('كاشير محلي مستقل'),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'يعمل بدون إنترنت وبدون Laravel. أنشئ متجراً محلياً أو ادخل بـ PIN.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              child: Text(
-                                'أو',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
+                                : const Icon(Icons.storefront_outlined),
+                            label: Text(
+                              _loading ? 'جاري الفتح…' : 'الدخول للكاشير المحلي',
                             ),
-                            const Expanded(child: Divider()),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 48,
-                          child: OutlinedButton.icon(
-                            onPressed: busy ? null : _google,
-                            icon: _googleBusy
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.g_mobiledata_rounded,
-                                    size: 28,
-                                  ),
-                            label: const Text('الدخول عبر Google'),
                           ),
                         ),
                       ],

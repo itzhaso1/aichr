@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/cashier_api.dart';
 import '../auth/auth_controller.dart';
+import '../config/app_config.dart';
 import '../local_db/local_db_providers.dart';
 import '../offline/pending_order.dart';
 import '../offline/sync_engine.dart';
@@ -53,6 +54,7 @@ class PosSyncCoordinator {
     int? workspaceId,
     String? deviceId,
   }) async {
+    if (!allowNetwork) return false;
     final hiveOk = await _hive.retryOne(localId, workspaceId: workspaceId);
     if (workspaceId == null || workspaceId <= 0) return hiveOk;
     final sqlite = await _sqlite.syncBidirectional(
@@ -73,6 +75,14 @@ final syncEngineV2Provider = Provider<SyncEngineV2>((ref) {
 });
 
 final posSyncCoordinatorProvider = Provider<PosSyncCoordinator>((ref) {
+  // Offline-only build: never push/pull against Laravel.
+  if (AppConfig.offlineOnly) {
+    return PosSyncCoordinator(
+      hiveEngine: ref.watch(syncEngineProvider),
+      sqliteEngine: ref.watch(syncEngineV2Provider),
+      allowNetwork: false,
+    );
+  }
   final session = ref.watch(authControllerProvider).valueOrNull;
   final connected = ref.watch(posConnectedModeProvider);
   final standalone =

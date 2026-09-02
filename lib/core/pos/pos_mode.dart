@@ -1,3 +1,5 @@
+import '../config/app_config.dart';
+
 /// Operating mode. Core POS never requires Connected.
 enum PosOperatingMode { standalone, connected }
 
@@ -21,13 +23,18 @@ class PosMode {
       token != null &&
       (token.startsWith('standalone:') || token == 'local-offline');
 
+  /// When [AppConfig.offlineOnly] is true the entire runtime is standalone —
+  /// no feature may take an API / sync path.
   static bool isStandaloneRuntime({
     required bool isLocalMode,
     String? token,
   }) =>
-      isLocalMode || isStandaloneToken(token);
+      AppConfig.offlineOnly || isLocalMode || isStandaloneToken(token);
 
   /// Standalone tokens never become a live session without a fresh PIN.
-  static bool admitRestoredSession(String? token) =>
-      token != null && token.isNotEmpty && !isStandaloneToken(token);
+  /// In offline-only builds, never admit a remote Laravel token either.
+  static bool admitRestoredSession(String? token) {
+    if (AppConfig.offlineOnly) return false;
+    return token != null && token.isNotEmpty && !isStandaloneToken(token);
+  }
 }

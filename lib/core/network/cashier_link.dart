@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/app_config.dart';
 import 'link_policy.dart';
 
 class CashierLinkState {
@@ -17,9 +18,18 @@ class CashierLinkState {
 }
 
 class CashierLinkController extends StateNotifier<CashierLinkState> {
-  CashierLinkController() : super(const CashierLinkState());
+  CashierLinkController()
+      : super(
+          AppConfig.offlineOnly
+              ? const CashierLinkState(
+                  link: CashierLink.offline,
+                  deviceOnline: false,
+                )
+              : const CashierLinkState(),
+        );
 
   void setDeviceOnline(bool online) {
+    if (AppConfig.offlineOnly) return;
     if (!online) {
       if (!state.deviceOnline && state.link == CashierLink.offline) return;
       state = const CashierLinkState(
@@ -37,6 +47,7 @@ class CashierLinkController extends StateNotifier<CashierLinkState> {
   }
 
   void onApiSuccess() {
+    if (AppConfig.offlineOnly) return;
     if (state.link == CashierLink.online && state.deviceOnline) return;
     state = CashierLinkState(
       link: state.deviceOnline ? CashierLink.online : CashierLink.offline,
@@ -45,6 +56,7 @@ class CashierLinkController extends StateNotifier<CashierLinkState> {
   }
 
   void onApiFailure({int? statusCode}) {
+    if (AppConfig.offlineOnly) return;
     final next = LinkPolicy.afterApi(
       deviceOnline: state.deviceOnline,
       statusCode: statusCode,
