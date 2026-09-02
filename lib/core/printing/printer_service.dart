@@ -43,7 +43,7 @@ class PrinterProfile {
       orElse: () => PrinterTransport.network,
     ),
     address: json['address'] as String?,
-    paperChars: (json['paper_chars'] as num?)?.toInt() ?? 32,
+    paperChars: asIntOr(json['paper_chars'], 32),
   );
 }
 

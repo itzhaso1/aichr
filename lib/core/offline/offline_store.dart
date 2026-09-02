@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
 
+import '../util/json_numbers.dart';
 import 'pending_order.dart';
 
 export 'pending_order.dart' show SyncStatus, PendingOrder, SyncPolicy, SyncFlushResult, SyncOutcome;
@@ -429,14 +430,14 @@ class OfflineStore {
     if (raw is! List) return const [];
     return raw.whereType<Map>().map((item) {
       final map = Map<String, dynamic>.from(item);
-      final qty = (map['quantity'] as num?)?.toInt() ?? 1;
-      final price = (map['unit_price'] as num?)?.toDouble() ?? 0;
+      final qty = asIntOr(map['quantity'], 1);
+      final price = asDoubleOr(map['unit_price']);
       return {
         'pos_menu_item_id': map['pos_menu_item_id'],
         'name': map['name'] ?? map['product_name'],
         'quantity': qty,
         'unit_price': price,
-        'total_amount': map['total_amount'] ?? qty * price,
+        'total_amount': asDoubleOr(map['total_amount'], qty * price),
       };
     }).toList();
   }

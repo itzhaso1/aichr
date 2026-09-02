@@ -7,16 +7,30 @@ import '../pos_errors.dart';
 class Money {
   const Money._();
 
-  static int toCents(num value) => (value * 100).round();
+  /// Accepts num or numeric strings from JSON/SQLite payloads.
+  /// Never throws on String — that was crashing reports/invoices.
+  static int toCents(Object? value) {
+    if (value == null) return 0;
+    final n = value is num
+        ? value.toDouble()
+        : double.tryParse('$value'.trim());
+    if (n == null) return 0;
+    return (n * 100).round();
+  }
 
   static double fromCents(int cents) => cents / 100.0;
 
-  static double round(num value) => fromCents(toCents(value));
+  static double round(Object? value) => fromCents(toCents(value));
 
   static int add(int a, int b) => a + b;
 
-  static int percentOf(int cents, num percent) =>
-      toCents(fromCents(cents) * (percent / 100));
+  static int percentOf(int cents, Object? percent) =>
+      toCents(fromCents(cents) * (asPercent(percent) / 100));
+
+  static double asPercent(Object? percent) {
+    if (percent is num) return percent.toDouble();
+    return double.tryParse('$percent'.trim()) ?? 0;
+  }
 }
 
 class PricedLine {

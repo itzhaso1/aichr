@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../../local_db/app_database.dart';
+import '../../util/json_numbers.dart';
 import '../domain/pricing_service.dart';
 
 class LocalReportsService {
@@ -15,12 +16,7 @@ class LocalReportsService {
     return (start, start.add(const Duration(days: 1)));
   }
 
-  int _asInt(Object? value) {
-    if (value is int) return value;
-    if (value is BigInt) return value.toInt();
-    if (value is num) return value.round();
-    return 0;
-  }
+  int _asInt(Object? value) => asIntOr(value);
 
   Future<Map<String, dynamic>> daily({
     required int workspaceId,

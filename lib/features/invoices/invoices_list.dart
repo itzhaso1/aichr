@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
-import '../../core/pos/pos_mode.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/theme/hasim_colors.dart';
@@ -27,7 +26,6 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   late DateTime _date;
   Map<String, dynamic>? _selected;
   String? _workspaceName;
-  var _stale = false;
 
   @override
   void initState() {
@@ -49,80 +47,28 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     });
     final workspaceId = ref.read(workspaceIdProvider);
     final finance = ref.read(localFinanceRepositoryProvider);
-
-    // Local first — never white-screen offline.
-    if (workspaceId != null && workspaceId > 0) {
-      try {
-        final local = await finance.listInvoices(
-          workspaceId: workspaceId,
-          onDate: _date,
-        );
-        if (!mounted) return;
-        if (local.isNotEmpty) {
-          setState(() {
-            _invoices = local;
-            _loading = false;
-            _stale = true;
-            _error = null;
-          });
-        }
-      } catch (_) {
-        // Continue to remote / empty state.
-      }
-    }
+    final session = ref.read(authControllerProvider).valueOrNull;
 
     try {
-      final session = ref.read(authControllerProvider).valueOrNull;
-      if (PosMode.isStandaloneRuntime(
-        isLocalMode: session?.isLocalMode == true,
-        token: session?.token,
-      )) {
-        if (!mounted) return;
-        setState(() {
-          _loading = false;
-          _stale = false;
-          _workspaceName =
-              session?.workspace?['name'] as String? ?? 'متجر محلي';
-        });
-        return;
-      }
-      final boot = await ref.read(cashierApiProvider).get('/bootstrap');
-      final data = await ref
-          .read(cashierApiProvider)
-          .get('/invoices', query: {'date': _dateQuery});
-      final list = asMapList(data['invoices']);
+      final local = workspaceId != null && workspaceId > 0
+          ? await finance.listInvoices(
+              workspaceId: workspaceId,
+              onDate: _date,
+            )
+          : const <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
-        if (list.isNotEmpty || _invoices.isEmpty) {
-          _invoices = list.isNotEmpty ? list : _invoices;
-        }
+        _invoices = local;
         _loading = false;
-        _stale = false;
         _error = null;
-        final ws = asStringKeyedMap(boot['workspace']);
-        _workspaceName = ws['name']?.toString() ?? _workspaceName;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        if (_invoices.isEmpty) {
-          _error = e.message;
-        } else {
-          _stale = true;
-          _error = null;
-        }
+        _workspaceName =
+            session?.workspace?['name'] as String? ?? 'متجر محلي';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        if (_invoices.isEmpty) {
-          _error = e.toString();
-        } else {
-          _stale = true;
-          _error = null;
-        }
+        _error = 'تعذر تحميل الفواتير المحلية: $e';
       });
     }
   }
@@ -148,29 +94,6 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
         local = await ref
             .read(localFinanceRepositoryProvider)
             .getInvoice(workspaceId: workspaceId, localId: localId);
-      }
-      final session = ref.read(authControllerProvider).valueOrNull;
-      final serverId = asInt(invoice['id'] ?? invoice['server_id']);
-      if (serverId != null &&
-          serverId > 0 &&
-          !PosMode.isStandaloneRuntime(
-            isLocalMode: session?.isLocalMode == true,
-            token: session?.token,
-          )) {
-        try {
-          final data = await ref
-              .read(cashierApiProvider)
-              .get('/invoices/$serverId');
-          if (!mounted) return;
-          final inv = data['invoice'] is Map
-              ? Map<String, dynamic>.from(data['invoice'] as Map)
-              : Map<String, dynamic>.from(data);
-          inv['store_name'] = _workspaceName ?? 'كاشير حاسم';
-          setState(() => _selected = inv);
-          return;
-        } catch (_) {
-          // Fall through to local draft.
-        }
       }
       if (!mounted) return;
       final draft = Map<String, dynamic>.from(local ?? invoice);
@@ -230,9 +153,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _stale
-                          ? 'عرض محلي — ستُحدَّث عند عودة الاتصال'
-                          : 'فاتورة مستقلة عن نظام الفوترة الخارجي.',
+                      'فواتير محلية من هذا الجهاز.',
                       style: const TextStyle(
                         fontSize: 12,
                         color: HasimColors.muted,
@@ -308,9 +229,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                       Text(
                                         inv['table'] != null
                                             ? 'طاولة: ${nestedName(inv['table'])}'
-                                            : (inv['is_local'] == true
-                                                  ? 'محلية — بانتظار المزامنة'
-                                                  : 'فاتورة'),
+                                            : 'فاتورة محلية',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: HasimColors.muted,

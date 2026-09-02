@@ -6,9 +6,6 @@ import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/pos/application/pos_providers.dart';
-import '../../core/pos/pos_mode.dart';
-import '../../core/network/cashier_link.dart';
-import '../../core/offline/offline_store.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/theme/hasim_colors.dart';
@@ -28,7 +25,6 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   var _loading = true;
   String? _error;
   var _forbidden = false;
-  var _stale = false;
   late DateTime _date;
 
   @override
@@ -52,113 +48,41 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     });
 
     final workspaceId = ref.read(workspaceIdProvider);
-    // Local SQLite report first — never white page offline.
-    if (workspaceId != null && workspaceId > 0) {
-      try {
-        final local = await ref
-            .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date);
-        if (!mounted) return;
-        setState(() {
-          _data = local;
-          _loading = false;
-          _stale = true;
-          _error = null;
-          _forbidden = false;
-        });
-      } catch (_) {
-        // Continue to remote / cache.
-      }
+    if (workspaceId == null || workspaceId <= 0) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'لا توجد مساحة عمل محلية.';
+      });
+      return;
     }
 
     try {
-      final session = ref.read(authControllerProvider).valueOrNull;
-      if (PosMode.isStandaloneRuntime(
-        isLocalMode: session?.isLocalMode == true,
-        token: session?.token,
-      )) {
-        final workspaceId = ref.read(workspaceIdProvider);
-        if (workspaceId != null) {
-          final local = await ref
-              .read(localReportsServiceProvider)
-              .daily(workspaceId: workspaceId, date: _date);
-          if (!mounted) return;
-          setState(() {
-            _data = local;
-            _loading = false;
-            _stale = false;
-            _error = null;
-          });
-        }
-        return;
-      }
-      final api = ref.read(cashierApiProvider);
-      final data = await api.get('/reports/daily', query: {'date': _q});
-      Map<String, dynamic> live = const {};
-      if (ref.read(cashierLinkProvider).isOnline) {
-        try {
-          final channel = await api.get('/orders/channel-stats');
-          if (channel['stats'] is Map) {
-            live = Map<String, dynamic>.from(channel['stats'] as Map);
-          } else if (channel['channel_stats'] is Map) {
-            live = Map<String, dynamic>.from(channel['channel_stats'] as Map);
-          }
-        } catch (_) {
-          // Daily report still usable without live open-counts.
-        }
+      // Prefer LocalReportsService (aggregates), fall back to finance builder.
+      Map<String, dynamic> local;
+      try {
+        local = await ref
+            .read(localReportsServiceProvider)
+            .daily(workspaceId: workspaceId, date: _date);
+      } catch (_) {
+        local = await ref
+            .read(localFinanceRepositoryProvider)
+            .buildDailyReport(workspaceId: workspaceId, date: _date);
       }
       if (!mounted) return;
-      await OfflineStore.instance.cacheDailyReport(_q, data);
       setState(() {
-        _data = data;
-        _liveChannelStats = live;
+        _data = local;
+        _liveChannelStats = const {};
         _loading = false;
         _error = null;
         _forbidden = false;
-        _stale = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      if (e.isForbidden) {
-        setState(() {
-          _loading = false;
-          _forbidden = true;
-          _error = e.message;
-          // Keep any local report already shown.
-        });
-        return;
-      }
-      final cached = OfflineStore.instance.readDailyReport(_q);
-      setState(() {
-        _loading = false;
-        _forbidden = false;
-        if (_data == null && cached != null) {
-          _data = cached;
-          _stale = true;
-          _error = null;
-        } else if (_data == null) {
-          _error = e.message;
-        } else {
-          _stale = true;
-          _error = null;
-        }
       });
     } catch (e) {
       if (!mounted) return;
-      final cached = OfflineStore.instance.readDailyReport(_q);
       setState(() {
         _loading = false;
         _forbidden = false;
-        if (_data == null && cached != null) {
-          _data = cached;
-          _stale = true;
-          _error = null;
-        } else if (_data == null) {
-          _error = e.toString();
-        } else {
-          _stale = true;
-          _error = null;
-        }
+        _error = 'تعذر تحميل التقرير المحلي: $e';
       });
     }
   }
@@ -282,9 +206,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                       ),
                     ),
                     Text(
-                      _stale
-                          ? 'عرض من البيانات المحلية — تُحدَّث عند المزامنة'
-                          : 'ملخص يومي من المبيعات والفواتير',
+                      'ملخص يومي من المبيعات والفواتير المحلية',
                       style: const TextStyle(
                         fontSize: 11,
                         color: HasimColors.muted,
