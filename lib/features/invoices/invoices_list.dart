@@ -10,6 +10,7 @@ import '../../core/printing/printer_service.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 /// Closed cashier invoices — local SQLite first, remote enrichment optional.
 class InvoicesList extends ConsumerStatefulWidget {
@@ -286,8 +287,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     itemBuilder: (context, index) {
                       final inv = _invoices[index];
                       return HsCard(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
+                        child: PosTap(
                           onTap: () => _openInvoice(inv),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4),

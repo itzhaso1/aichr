@@ -27,6 +27,7 @@ import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 import '../admin/admin_placeholders.dart';
 import '../cart/cart_controller.dart';
 import '../customers/customers_panel.dart';
@@ -479,11 +480,37 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         ],
       ),
       floatingActionButton: (!isDesktop && _section == _PosSection.cashier)
-          ? FloatingActionButton.extended(
-              backgroundColor: HasimColors.cta,
-              onPressed: () => _openCartSheet(context),
-              icon: const Icon(Icons.shopping_bag_outlined),
-              label: Text('السلة (${cart.lines.length})'),
+          ? PosTap(
+              onTap: () => _openCartSheet(context),
+              child: Material(
+                elevation: 4,
+                color: HasimColors.cta,
+                borderRadius: BorderRadius.circular(HasimRadius.pill),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.shopping_bag_outlined,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'السلة (${cart.lines.length})',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             )
           : null,
     );
@@ -765,54 +792,37 @@ class _TopHeader extends StatelessWidget {
                 ],
               ),
               const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'مزامنة',
-                onPressed: onSync,
-                icon: const Icon(Icons.sync, size: 20),
+              PosTap(
+                onTap: onSync,
+                child: const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: Icon(Icons.sync, size: 20),
+                ),
               ),
               if (onCart != null)
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    IconButton(
-                      onPressed: onCart,
-                      icon: const Icon(Icons.shopping_bag_outlined),
+                PosTap(
+                  onTap: onCart,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Badge(
+                      isLabelVisible: cartCount > 0,
+                      label: Text('$cartCount'),
+                      backgroundColor: HasimColors.cta,
+                      child: const Icon(Icons.shopping_bag_outlined),
                     ),
-                    if (cartCount > 0)
-                      Positioned(
-                        top: 4,
-                        left: 4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: HasimColors.cta,
-                            borderRadius: BorderRadius.circular(
-                              HasimRadius.pill,
-                            ),
-                          ),
-                          child: Text(
-                            '$cartCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                  ),
                 ),
-              TextButton(
-                onPressed: onLogout,
-                child: const Text(
-                  'خروج',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: HasimColors.ink,
+              PosTap(
+                onTap: onLogout,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Text(
+                    'خروج',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: HasimColors.ink,
+                    ),
                   ),
                 ),
               ),
@@ -1091,29 +1101,25 @@ class _CashierHome extends ConsumerWidget {
   Widget _chip(String label, bool selected, VoidCallback onTap) {
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
-      child: Material(
-        color: selected ? HasimColors.brand : HasimColors.surface,
-        borderRadius: BorderRadius.circular(HasimRadius.md),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: Container(
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            constraints: const BoxConstraints(minHeight: 44, minWidth: 64),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(HasimRadius.md),
-              border: Border.all(
-                color: selected ? HasimColors.brand : HasimColors.border,
-              ),
+      child: PosTap(
+        onTap: onTap,
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          constraints: const BoxConstraints(minHeight: 44, minWidth: 64),
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.brand : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+            border: Border.all(
+              color: selected ? HasimColors.brand : HasimColors.border,
             ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: selected ? Colors.white : HasimColors.ink,
-              ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? Colors.white : HasimColors.ink,
             ),
           ),
         ),
@@ -1597,23 +1603,19 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
   }
 
   Widget _qtyBtn(String label, VoidCallback onTap) {
-    return Material(
-      color: HasimColors.surface,
-      borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            border: Border.all(color: HasimColors.border),
-            borderRadius: BorderRadius.circular(HasimRadius.sm),
-          ),
-          child: Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-          ),
+    return PosTap(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: HasimColors.surface,
+          border: Border.all(color: HasimColors.border),
+          borderRadius: BorderRadius.circular(HasimRadius.sm),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
         ),
       ),
     );
@@ -1724,25 +1726,20 @@ class _TablePickerField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: HasimColors.surface,
-      borderRadius: BorderRadius.circular(HasimRadius.md),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _open(context),
-        child: InputDecorator(
-          decoration: const InputDecoration(
-            labelText: 'الطاولة',
-            isDense: true,
-            border: OutlineInputBorder(),
-            suffixIcon: Icon(Icons.keyboard_arrow_down),
-          ),
-          child: Text(
-            _label,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              color: selectedId == null ? HasimColors.muted : HasimColors.ink,
-            ),
+    return PosTap(
+      onTap: () => _open(context),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'الطاولة',
+          isDense: true,
+          border: OutlineInputBorder(),
+          suffixIcon: Icon(Icons.keyboard_arrow_down),
+        ),
+        child: Text(
+          _label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: selectedId == null ? HasimColors.muted : HasimColors.ink,
           ),
         ),
       ),
@@ -1763,28 +1760,24 @@ class _OrderTypeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? HasimColors.cta : HasimColors.surface,
-      borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(HasimRadius.sm),
-            border: Border.all(
-              color: selected ? HasimColors.cta : HasimColors.border,
-            ),
+    return PosTap(
+      onTap: onTap,
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? HasimColors.cta : HasimColors.surface,
+          borderRadius: BorderRadius.circular(HasimRadius.sm),
+          border: Border.all(
+            color: selected ? HasimColors.cta : HasimColors.border,
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: selected ? Colors.white : HasimColors.ink,
-            ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : HasimColors.ink,
           ),
         ),
       ),

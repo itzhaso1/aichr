@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hasim_cashier/core/widgets/hasim_widgets.dart';
+import 'package:hasim_cashier/core/widgets/pos_tap.dart';
 import 'package:hasim_cashier/features/tables/table_action_wizards.dart';
 
 void main() {
@@ -16,6 +17,13 @@ void main() {
     };
     addTearDown(() => FlutterError.onError = previous);
   });
+
+  Future<void> tapAndSettle(WidgetTester tester, Finder finder) async {
+    await tester.tap(finder);
+    // PosTap defers onTap to the next frame.
+    await tester.pump();
+    await tester.pump();
+  }
 
   testWidgets('product grid cards do not throw layout/semantics errors',
       (tester) async {
@@ -42,8 +50,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(ProductCard).first);
-    await tester.pump();
+    await tapAndSettle(tester, find.byType(ProductCard).first);
     expect(errors, isEmpty, reason: errors.join('\n'));
   });
 
@@ -109,8 +116,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(ProductCard).first);
-    await tester.pump();
+    await tapAndSettle(tester, find.byType(ProductCard).first);
     expect(errors, isEmpty, reason: errors.join('\n'));
   });
 
@@ -148,6 +154,7 @@ void main() {
 
   testWidgets('nav pills and product hover path do not throw mouse_tracker',
       (tester) async {
+    var taps = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -170,7 +177,7 @@ void main() {
                     name: 'صنف $i',
                     priceLabel: '5.00',
                     currency: 'SAR',
-                    onAdd: () {},
+                    onAdd: () => taps++,
                   ),
                 ),
               ),
@@ -191,9 +198,10 @@ void main() {
     await tester.pump();
     await gesture.moveTo(tester.getCenter(find.text('التقارير')));
     await tester.pump();
-    await tester.tap(find.byType(ProductCard).first);
-    await tester.pump();
+    await tapAndSettle(tester, find.byType(ProductCard).first);
 
+    expect(taps, 1);
+    expect(find.byType(PosTap), findsWidgets);
     expect(
       errors.where(
         (e) =>

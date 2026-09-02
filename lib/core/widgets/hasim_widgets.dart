@@ -5,6 +5,7 @@ import '../network/link_policy.dart';
 import '../theme/hasim_colors.dart';
 import '../theme/hasim_radius.dart';
 import '../theme/hasim_spacing.dart';
+import 'pos_tap.dart';
 
 class HsCard extends StatelessWidget {
   const HsCard({
@@ -54,10 +55,19 @@ class HsPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 48,
-      child: FilledButton(
-        onPressed: loading ? null : onPressed,
+    final enabled = onPressed != null && !loading;
+    return PosTap(
+      enabled: enabled,
+      onTap: onPressed,
+      child: Container(
+        height: 48,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: enabled
+              ? HasimColors.cta
+              : HasimColors.cta.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(HasimRadius.sm),
+        ),
         child: loading
             ? const SizedBox(
                 width: 18,
@@ -67,7 +77,13 @@ class HsPrimaryButton extends StatelessWidget {
                   color: Colors.white,
                 ),
               )
-            : Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+            : Text(
+                label,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
       ),
     );
   }
@@ -85,11 +101,27 @@ class HsOutlineButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 48,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+    final enabled = onPressed != null;
+    return PosTap(
+      enabled: enabled,
+      onTap: onPressed,
+      child: Container(
+        height: 48,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: HasimColors.surface,
+          borderRadius: BorderRadius.circular(HasimRadius.sm),
+          border: Border.all(
+            color: enabled ? HasimColors.cta : HasimColors.border,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: enabled ? HasimColors.ctaDark : HasimColors.muted,
+          ),
+        ),
       ),
     );
   }
@@ -128,8 +160,8 @@ class HsEmpty extends StatelessWidget {
             ],
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: HasimSpacing.md),
-              TextButton(
-                onPressed: onAction,
+              PosTap(
+                onTap: onAction,
                 child: Text(
                   actionLabel!,
                   style: const TextStyle(
@@ -205,21 +237,20 @@ class HsNavPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? HasimColors.navActiveBg : HasimColors.navIdleBg,
-      borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: selected ? Colors.white : HasimColors.ink,
-            ),
+    return PosTap(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? HasimColors.navActiveBg : HasimColors.navIdleBg,
+          borderRadius: BorderRadius.circular(HasimRadius.sm),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : HasimColors.ink,
           ),
         ),
       ),
@@ -245,47 +276,43 @@ class HsCategoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: Material(
-        color: selected ? HasimColors.brand : HasimColors.surface,
-        borderRadius: BorderRadius.circular(HasimRadius.md),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: Container(
-            width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 48),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(HasimRadius.md),
-              border: Border.all(
-                color: selected ? HasimColors.brand : HasimColors.border,
-              ),
+      child: PosTap(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.brand : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+            border: Border.all(
+              color: selected ? HasimColors.brand : HasimColors.border,
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                      color: selected ? Colors.white : HasimColors.ink,
-                    ),
-                  ),
-                ),
-                Text(
-                  '$count',
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: selected
-                        ? Colors.white.withValues(alpha: 0.9)
-                        : HasimColors.muted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: selected ? Colors.white : HasimColors.ink,
                   ),
                 ),
-              ],
-            ),
+              ),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.9)
+                      : HasimColors.muted,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -293,12 +320,7 @@ class HsCategoryTile extends StatelessWidget {
   }
 }
 
-/// Dense POS product card — optimized for touch cashiers.
-///
-/// Uses [GestureDetector] (not [InkWell]) so desktop mouse hover never
-/// attaches a [MouseRegion] to a box that may rebuild mid-frame — that
-/// combination triggers `Cannot hit test a render box with no size` and
-/// `!_debugDuringDeviceUpdate` storms on Windows/web.
+/// Dense POS product card — no Material ink / MouseRegion.
 class ProductCard extends StatelessWidget {
   const ProductCard({
     super.key,
@@ -332,8 +354,7 @@ class ProductCard extends StatelessWidget {
             w >= 1 &&
             h >= 1;
         if (!bounded) {
-          // Absorb stray hits without mounting interactive mouse regions.
-          return const IgnorePointer(child: SizedBox.shrink());
+          return const SizedBox.shrink();
         }
 
         final showImage = h >= 168;
@@ -342,25 +363,23 @@ class ProductCard extends StatelessWidget {
 
         return Opacity(
           opacity: available ? 1 : 0.55,
-          child: Material(
-            color: HasimColors.surface,
-            clipBehavior: Clip.antiAlias,
-            borderRadius: BorderRadius.circular(HasimRadius.md),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: available ? onAdd : null,
-              child: SizedBox(
-                width: w,
-                height: h,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(HasimRadius.md),
-                    border: Border.all(color: HasimColors.border),
-                  ),
-                  child: ClipRect(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
+          child: PosTap(
+            enabled: available,
+            onTap: onAdd,
+            child: SizedBox(
+              width: w,
+              height: h,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: HasimColors.surface,
+                  borderRadius: BorderRadius.circular(HasimRadius.md),
+                  border: Border.all(color: HasimColors.border),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(HasimRadius.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       if (showImage)
                         Expanded(
                           child: ColoredBox(
@@ -375,7 +394,10 @@ class ProductCard extends StatelessWidget {
                                     imageUrl: imageUrl!,
                                     fit: BoxFit.cover,
                                     width: w,
-                                    height: double.infinity,
+                                    fadeInDuration: Duration.zero,
+                                    fadeOutDuration: Duration.zero,
+                                    memCacheWidth:
+                                        (w * 2).round().clamp(64, 512),
                                     placeholder: (_, _) => const ColoredBox(
                                       color: HasimColors.surfaceSoft,
                                     ),
@@ -475,7 +497,6 @@ class ProductCard extends StatelessWidget {
                         ),
                       ),
                     ],
-                    ),
                   ),
                 ),
               ),
@@ -550,9 +571,18 @@ class ConnectionBanner extends StatelessWidget {
             ),
           ),
           if (onRetry != null)
-            TextButton(
-              onPressed: onRetry,
-              child: Text(offline ? 'إعادة المحاولة' : 'مزامنة'),
+            PosTap(
+              onTap: onRetry,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Text(
+                  offline ? 'إعادة المحاولة' : 'مزامنة',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: offline ? HasimColors.warning : HasimColors.ctaDark,
+                  ),
+                ),
+              ),
             ),
         ],
       ),

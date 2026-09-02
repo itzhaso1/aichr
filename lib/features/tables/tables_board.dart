@@ -11,6 +11,7 @@ import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 import 'table_detail_screen.dart';
 import 'table_workspace.dart';
 
@@ -180,9 +181,12 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh),
+              PosTap(
+                onTap: _load,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.refresh),
+                ),
               ),
             ],
           ),
@@ -226,8 +230,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(HasimRadius.md),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
+      child: PosTap(
         onTap: () => openTableWorkspace(ref, id),
         child: Container(
           decoration: BoxDecoration(

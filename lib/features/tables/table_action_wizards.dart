@@ -4,6 +4,7 @@ import '../../core/pos/pos_labels.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 /// Multi-step transfer / merge wizard matching cashier UX expectations.
 class TableTransferWizard extends StatefulWidget {
@@ -117,8 +118,7 @@ class _TableTransferWizardState extends State<TableTransferWizard> {
           return Material(
             color: selected ? HasimColors.ctaSoft : Colors.white,
             borderRadius: BorderRadius.circular(HasimRadius.md),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(HasimRadius.md),
+            child: PosTap(
               onTap: () => setState(() => _targetId = id),
               child: Container(
                 padding: const EdgeInsets.all(14),
