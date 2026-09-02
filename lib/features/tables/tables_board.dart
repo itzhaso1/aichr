@@ -226,10 +226,10 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(HasimRadius.md),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(HasimRadius.md),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => openTableWorkspace(ref, id),
-        child: Ink(
+        child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(HasimRadius.md),
             border: Border.all(
@@ -287,7 +287,10 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                 children: [
                   Text(
                     'الطلبات: $orders',
-                    style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: HasimColors.muted,
+                    ),
                   ),
                   if (total > 0)
                     Text(

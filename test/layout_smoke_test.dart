@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hasim_cashier/core/widgets/hasim_widgets.dart';
@@ -143,6 +144,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('نقل الطاولة'), findsOneWidget);
     expect(errors, isEmpty, reason: errors.join('\n'));
+  });
+
+  testWidgets('nav pills and product hover path do not throw mouse_tracker',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              Row(
+                children: [
+                  HsNavPill(label: 'الكاشير', selected: true, onTap: () {}),
+                  HsNavPill(label: 'التقارير', selected: false, onTap: () {}),
+                ],
+              ),
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    childAspectRatio: 0.75,
+                  ),
+                  itemCount: 4,
+                  itemBuilder: (_, i) => ProductCard(
+                    name: 'صنف $i',
+                    priceLabel: '5.00',
+                    currency: 'SAR',
+                    onAdd: () {},
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    addTearDown(gesture.removePointer);
+    await tester.pump();
+
+    final card = tester.getCenter(find.byType(ProductCard).first);
+    await gesture.moveTo(card);
+    await tester.pump();
+    await gesture.moveTo(tester.getCenter(find.text('التقارير')));
+    await tester.pump();
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
+
+    expect(
+      errors.where(
+        (e) =>
+            '$e'.contains('no size') ||
+            '$e'.contains('_debugDuringDeviceUpdate'),
+      ),
+      isEmpty,
+      reason: errors.join('\n'),
+    );
   });
 }
 

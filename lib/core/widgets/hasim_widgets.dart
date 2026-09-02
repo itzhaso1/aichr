@@ -208,9 +208,9 @@ class HsNavPill extends StatelessWidget {
     return Material(
       color: selected ? HasimColors.navActiveBg : HasimColors.navIdleBg,
       borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: InkWell(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(HasimRadius.sm),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Text(
@@ -248,9 +248,9 @@ class HsCategoryTile extends StatelessWidget {
       child: Material(
         color: selected ? HasimColors.brand : HasimColors.surface,
         borderRadius: BorderRadius.circular(HasimRadius.md),
-        child: InkWell(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: onTap,
-          borderRadius: BorderRadius.circular(HasimRadius.md),
           child: Container(
             width: double.infinity,
             constraints: const BoxConstraints(minHeight: 48),
@@ -294,6 +294,11 @@ class HsCategoryTile extends StatelessWidget {
 }
 
 /// Dense POS product card — optimized for touch cashiers.
+///
+/// Uses [GestureDetector] (not [InkWell]) so desktop mouse hover never
+/// attaches a [MouseRegion] to a box that may rebuild mid-frame — that
+/// combination triggers `Cannot hit test a render box with no size` and
+/// `!_debugDuringDeviceUpdate` storms on Windows/web.
 class ProductCard extends StatelessWidget {
   const ProductCard({
     super.key,
@@ -318,53 +323,59 @@ class ProductCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
         final bounded = constraints.hasBoundedWidth &&
             constraints.hasBoundedHeight &&
-            constraints.maxWidth >= 1 &&
-            constraints.maxHeight >= 1;
+            w.isFinite &&
+            h.isFinite &&
+            w >= 1 &&
+            h >= 1;
         if (!bounded) {
-          // Never mount InkWell/MouseRegion on a 0-size box.
-          return const SizedBox.shrink();
+          // Absorb stray hits without mounting interactive mouse regions.
+          return const IgnorePointer(child: SizedBox.shrink());
         }
-        final showImage = constraints.maxHeight >= 168;
+
+        final showImage = h >= 168;
+        final showSku = h >= 120 && sku != null && sku!.isNotEmpty;
+        final showAddChip = h >= 96;
+
         return Opacity(
           opacity: available ? 1 : 0.55,
-          child: SizedBox(
-            width: constraints.maxWidth,
-            height: constraints.maxHeight,
-            child: Material(
-              color: HasimColors.surface,
-              clipBehavior: Clip.antiAlias,
-              borderRadius: BorderRadius.circular(HasimRadius.md),
-              child: InkWell(
-                onTap: available ? onAdd : null,
-                borderRadius: BorderRadius.circular(HasimRadius.md),
-                child: Ink(
+          child: Material(
+            color: HasimColors.surface,
+            clipBehavior: Clip.antiAlias,
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: available ? onAdd : null,
+              child: SizedBox(
+                width: w,
+                height: h,
+                child: DecoratedBox(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(HasimRadius.md),
                     border: Border.all(color: HasimColors.border),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
+                  child: ClipRect(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                       if (showImage)
                         Expanded(
-                          child: ClipRRect(
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(HasimRadius.md),
-                            ),
+                          child: ColoredBox(
+                            color: HasimColors.surfaceSoft,
                             child: imageUrl == null || imageUrl!.isEmpty
-                                ? ColoredBox(
-                                    color: HasimColors.surfaceSoft,
-                                    child: const Icon(
-                                      Icons.restaurant_menu,
-                                      color: Color(0xFFCBD5E1),
-                                      size: 36,
-                                    ),
+                                ? const Icon(
+                                    Icons.restaurant_menu,
+                                    color: Color(0xFFCBD5E1),
+                                    size: 36,
                                   )
                                 : CachedNetworkImage(
                                     imageUrl: imageUrl!,
                                     fit: BoxFit.cover,
+                                    width: w,
+                                    height: double.infinity,
                                     placeholder: (_, _) => const ColoredBox(
                                       color: HasimColors.surfaceSoft,
                                     ),
@@ -379,14 +390,19 @@ class ProductCard extends StatelessWidget {
                           ),
                         ),
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                        padding: EdgeInsets.fromLTRB(
+                          8,
+                          showImage ? 6 : 8,
+                          8,
+                          8,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
                               name,
-                              maxLines: 2,
+                              maxLines: showImage ? 2 : 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 12,
@@ -394,7 +410,7 @@ class ProductCard extends StatelessWidget {
                                 height: 1.2,
                               ),
                             ),
-                            if (sku != null && sku!.isNotEmpty)
+                            if (showSku)
                               Text(
                                 sku!,
                                 maxLines: 1,
@@ -425,37 +441,41 @@ class ProductCard extends StatelessWidget {
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 6),
-                            Container(
-                              height: 32,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: available
-                                    ? HasimColors.ctaSoft
-                                    : HasimColors.surfaceSoft,
-                                borderRadius:
-                                    BorderRadius.circular(HasimRadius.sm),
-                                border: Border.all(
+                            if (showAddChip) ...[
+                              const SizedBox(height: 6),
+                              Container(
+                                height: 32,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
                                   color: available
-                                      ? HasimColors.cta
-                                      : HasimColors.border,
+                                      ? HasimColors.ctaSoft
+                                      : HasimColors.surfaceSoft,
+                                  borderRadius: BorderRadius.circular(
+                                    HasimRadius.sm,
+                                  ),
+                                  border: Border.all(
+                                    color: available
+                                        ? HasimColors.cta
+                                        : HasimColors.border,
+                                  ),
+                                ),
+                                child: Text(
+                                  available ? '+ إضافة' : 'غير متوفر',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: available
+                                        ? HasimColors.ctaDark
+                                        : HasimColors.muted,
+                                  ),
                                 ),
                               ),
-                              child: Text(
-                                available ? '+ إضافة' : 'غير متوفر',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: available
-                                      ? HasimColors.ctaDark
-                                      : HasimColors.muted,
-                                ),
-                              ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
                     ],
+                    ),
                   ),
                 ),
               ),

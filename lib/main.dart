@@ -65,7 +65,7 @@ class HasimCashierApp extends ConsumerWidget {
       // POS terminal: skip the accessibility tree. Flutter 3.35 debug builds
       // can cascade `!semantics.parentDataDirty` around modal/dropdown routes.
       builder: (context, child) => ExcludeSemantics(
-        child: child ?? const SizedBox.shrink(),
+        child: child ?? const SizedBox.expand(),
       ),
       routerConfig: router,
     );

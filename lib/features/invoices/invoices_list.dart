@@ -286,7 +286,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     itemBuilder: (context, index) {
                       final inv = _invoices[index];
                       return HsCard(
-                        child: InkWell(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
                           onTap: () => _openInvoice(inv),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4),

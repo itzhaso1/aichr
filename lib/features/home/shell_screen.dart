@@ -1094,9 +1094,9 @@ class _CashierHome extends ConsumerWidget {
       child: Material(
         color: selected ? HasimColors.brand : HasimColors.surface,
         borderRadius: BorderRadius.circular(HasimRadius.md),
-        child: InkWell(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: onTap,
-          borderRadius: BorderRadius.circular(HasimRadius.md),
           child: Container(
             alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1254,44 +1254,50 @@ class _ProductsPanel extends ConsumerWidget {
   }
 
   Widget _grid(WidgetRef ref, List<Map<String, dynamic>> items, int crossAxis) {
-    return GridView.builder(
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxis,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 0.68,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final id = asIntOr(item['id']);
-        final name = '${item['name'] ?? ''}';
-        final price = asDoubleOr(item['price']);
-        final available =
-            item['is_active'] != false && item['availability'] != 'unavailable';
-        return ProductCard(
-          name: name,
-          priceLabel: price.toStringAsFixed(2),
-          currency: '${item['currency'] ?? 'SAR'}',
-          imageUrl: item['image_url'] as String?,
-          sku: item['sku'] as String?,
-          available: available,
-          onAdd: () {
-            final localId =
-                (item['local_id'] as String?) ??
-                (item['id']?.toString() ?? name);
-            ref
-                .read(cartControllerProvider.notifier)
-                .addItem(
-                  productLocalId: localId,
-                  menuItemId: id == 0 ? null : id,
-                  name: name,
-                  unitPrice: price,
-                  taxRate: asDoubleOr(item['tax_rate']),
-                  cost: asDoubleOr(item['cost']),
-                  sku: item['sku'] as String?,
-                  barcode: item['barcode'] as String?,
-                );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cellW = constraints.maxWidth.isFinite && constraints.maxWidth > 0
+            ? (constraints.maxWidth - (10 * (crossAxis - 1))) / crossAxis
+            : 140.0;
+        // Keep cells tall enough for text + add chip; avoid zero-flex overflow.
+        final ratio = cellW >= 180 ? 0.72 : 0.78;
+        return GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxis,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: ratio,
+          ),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            final id = asIntOr(item['id']);
+            final name = '${item['name'] ?? ''}';
+            final price = asDoubleOr(item['price']);
+            final available = item['is_active'] != false &&
+                item['availability'] != 'unavailable';
+            return ProductCard(
+              name: name,
+              priceLabel: price.toStringAsFixed(2),
+              currency: '${item['currency'] ?? 'SAR'}',
+              imageUrl: item['image_url'] as String?,
+              sku: item['sku'] as String?,
+              available: available,
+              onAdd: () {
+                final localId = (item['local_id'] as String?) ??
+                    (item['id']?.toString() ?? name);
+                ref.read(cartControllerProvider.notifier).addItem(
+                      productLocalId: localId,
+                      menuItemId: id == 0 ? null : id,
+                      name: name,
+                      unitPrice: price,
+                      taxRate: asDoubleOr(item['tax_rate']),
+                      cost: asDoubleOr(item['cost']),
+                      sku: item['sku'] as String?,
+                      barcode: item['barcode'] as String?,
+                    );
+              },
+            );
           },
         );
       },
@@ -1594,9 +1600,9 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     return Material(
       color: HasimColors.surface,
       borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: InkWell(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(HasimRadius.sm),
         child: Container(
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           alignment: Alignment.center,
@@ -1721,9 +1727,9 @@ class _TablePickerField extends StatelessWidget {
     return Material(
       color: HasimColors.surface,
       borderRadius: BorderRadius.circular(HasimRadius.md),
-      child: InkWell(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => _open(context),
-        borderRadius: BorderRadius.circular(HasimRadius.md),
         child: InputDecorator(
           decoration: const InputDecoration(
             labelText: 'الطاولة',
@@ -1760,9 +1766,9 @@ class _OrderTypeChip extends StatelessWidget {
     return Material(
       color: selected ? HasimColors.cta : HasimColors.surface,
       borderRadius: BorderRadius.circular(HasimRadius.sm),
-      child: InkWell(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(HasimRadius.sm),
         child: Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(vertical: 8),
