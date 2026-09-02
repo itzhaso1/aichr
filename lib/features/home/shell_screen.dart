@@ -158,21 +158,25 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       db.readCursor(workspaceId),
     ]).then((values) {
       if (!mounted) return;
-      final counts = values[0] as SyncQueueCounts;
-      final lastPush = values[1] as DateTime?;
-      final lastPull = values[2] as DateTime?;
-      DateTime? last;
-      if (lastPush != null && lastPull != null) {
-        last = lastPush.isAfter(lastPull) ? lastPush : lastPull;
-      } else {
-        last = lastPush ?? lastPull;
-      }
-      setState(() {
-        _pendingSync = counts.waiting;
-        _failedSync = counts.failed;
-        _lastSyncAt = last;
-        _syncCursor = values[3] as String?;
-        _syncDeviceId = ref.read(deviceIdHeaderProvider);
+      // Defer past any in-flight mouse-tracker update.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final counts = values[0] as SyncQueueCounts;
+        final lastPush = values[1] as DateTime?;
+        final lastPull = values[2] as DateTime?;
+        DateTime? last;
+        if (lastPush != null && lastPull != null) {
+          last = lastPush.isAfter(lastPull) ? lastPush : lastPull;
+        } else {
+          last = lastPush ?? lastPull;
+        }
+        setState(() {
+          _pendingSync = counts.waiting;
+          _failedSync = counts.failed;
+          _lastSyncAt = last;
+          _syncCursor = values[3] as String?;
+          _syncDeviceId = ref.read(deviceIdHeaderProvider);
+        });
       });
     });
   }
@@ -378,7 +382,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final isDesktop = width >= 1100;
     final isTablet = width >= 800 && width < 1100;
-    final cart = ref.watch(cartControllerProvider);
+    // Do NOT watch the full cart here — every line change would rebuild the
+    // product grid under a hovering mouse and trip mouse_tracker/no-size asserts.
     final session = ref.watch(authControllerProvider).valueOrNull;
     final link = ref.watch(cashierLinkProvider);
     final workspaceName =
@@ -389,7 +394,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         children: [
           _TopHeader(
             workspaceName: workspaceName,
-            cartCount: cart.lines.fold<int>(0, (s, l) => s + l.quantity),
             online: link.isOnline,
             onCart: isDesktop ? null : () => _openCartSheet(context),
             onLogout: () async {
@@ -480,38 +484,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         ],
       ),
       floatingActionButton: (!isDesktop && _section == _PosSection.cashier)
-          ? PosTap(
-              onTap: () => _openCartSheet(context),
-              child: Material(
-                elevation: 4,
-                color: HasimColors.cta,
-                borderRadius: BorderRadius.circular(HasimRadius.pill),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.shopping_bag_outlined,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'السلة (${cart.lines.length})',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            )
+          ? _MobileCartFab(onOpen: () => _openCartSheet(context))
           : null,
     );
   }
@@ -719,10 +692,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   }
 }
 
-class _TopHeader extends StatelessWidget {
+class _TopHeader extends ConsumerWidget {
   const _TopHeader({
     required this.workspaceName,
-    required this.cartCount,
     required this.online,
     required this.onLogout,
     required this.onSync,
@@ -730,14 +702,18 @@ class _TopHeader extends StatelessWidget {
   });
 
   final String workspaceName;
-  final int cartCount;
   final bool online;
   final VoidCallback onLogout;
   final VoidCallback onSync;
   final VoidCallback? onCart;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cartCount = ref.watch(
+      cartControllerProvider.select(
+        (c) => c.lines.fold<int>(0, (s, l) => s + l.quantity),
+      ),
+    );
     return Material(
       color: HasimColors.surface.withValues(alpha: 0.95),
       child: SafeArea(
@@ -804,11 +780,34 @@ class _TopHeader extends StatelessWidget {
                   onTap: onCart,
                   child: Padding(
                     padding: const EdgeInsets.all(10),
-                    child: Badge(
-                      isLabelVisible: cartCount > 0,
-                      label: Text('$cartCount'),
-                      backgroundColor: HasimColors.cta,
-                      child: const Icon(Icons.shopping_bag_outlined),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.shopping_bag_outlined),
+                        if (cartCount > 0) ...[
+                          const SizedBox(width: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: HasimColors.cta,
+                              borderRadius: BorderRadius.circular(
+                                HasimRadius.pill,
+                              ),
+                            ),
+                            child: Text(
+                              '$cartCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),
@@ -824,6 +823,48 @@ class _TopHeader extends StatelessWidget {
                       color: HasimColors.ink,
                     ),
                   ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileCartFab extends ConsumerWidget {
+  const _MobileCartFab({required this.onOpen});
+
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lines = ref.watch(
+      cartControllerProvider.select((c) => c.lines.length),
+    );
+    return PosTap(
+      onTap: onOpen,
+      child: Material(
+        elevation: 4,
+        color: HasimColors.cta,
+        borderRadius: BorderRadius.circular(HasimRadius.pill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.shopping_bag_outlined,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'السلة ($lines)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -1003,12 +1044,14 @@ class _CashierHome extends ConsumerWidget {
               flex: 7,
               child: HsCard(
                 padding: const EdgeInsets.all(10),
-                child: _ProductsPanel(
-                  search: search,
-                  selectedCategoryId: selectedCategoryId,
-                  onCategory: onCategory,
-                  onSearchChanged: onSearchChanged,
-                  showMobileCategories: !isDesktop,
+                child: RepaintBoundary(
+                  child: _ProductsPanel(
+                    search: search,
+                    selectedCategoryId: selectedCategoryId,
+                    onCategory: onCategory,
+                    onSearchChanged: onSearchChanged,
+                    showMobileCategories: !isDesktop,
+                  ),
                 ),
               ),
             ),
@@ -1084,12 +1127,14 @@ class _CashierHome extends ConsumerWidget {
           const SizedBox(height: 8),
           Expanded(
             child: HsCard(
-              child: _ProductsPanel(
-                search: search,
-                selectedCategoryId: selectedCategoryId,
-                onCategory: onCategory,
-                onSearchChanged: onSearchChanged,
-                showMobileCategories: false,
+              child: RepaintBoundary(
+                child: _ProductsPanel(
+                  search: search,
+                  selectedCategoryId: selectedCategoryId,
+                  onCategory: onCategory,
+                  onSearchChanged: onSearchChanged,
+                  showMobileCategories: false,
+                ),
               ),
             ),
           ),
@@ -1515,22 +1560,22 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                                     color: HasimColors.muted,
                                   ),
                                 ),
-                                TextButton(
-                                  onPressed: () => notifier.removeItem(
+                                PosTap(
+                                  onTap: () => notifier.removeItem(
                                     cart.lines[index].productLocalId,
                                   ),
-                                  style: TextButton.styleFrom(
-                                    padding: EdgeInsets.zero,
-                                    minimumSize: const Size(32, 24),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  child: const Text(
-                                    'حذف',
-                                    style: TextStyle(
-                                      color: HasimColors.danger,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    child: Text(
+                                      'حذف',
+                                      style: TextStyle(
+                                        color: HasimColors.danger,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
                                   ),
                                 ),

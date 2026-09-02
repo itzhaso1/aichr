@@ -10,6 +10,19 @@ import 'router/app_router.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  final previousOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final message = details.exceptionAsString();
+    // Debug-only framework races while the POS rebuilds under a desktop
+    // mouse cursor. They are noisy and non-fatal; ignore them.
+    if (message.contains('Cannot hit test a render box with no size') ||
+        message.contains('_debugDuringDeviceUpdate')) {
+      return;
+    }
+    previousOnError?.call(details);
+  };
+
   ErrorWidget.builder = (details) {
     return Material(
       color: Colors.white,

@@ -212,6 +212,57 @@ void main() {
       reason: errors.join('\n'),
     );
   });
+
+  testWidgets('rapid taps under mouse hover do not trip no-size asserts',
+      (tester) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GridView.builder(
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 0.7,
+            ),
+            itemCount: 12,
+            itemBuilder: (_, i) => ProductCard(
+              name: 'P$i',
+              priceLabel: '1.00',
+              currency: 'SAR',
+              onAdd: () => taps++,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(gesture.removePointer);
+    await gesture.addPointer(
+      location: tester.getCenter(find.byType(ProductCard).at(1)),
+    );
+    await tester.pump();
+
+    for (var i = 0; i < 5; i++) {
+      await tapAndSettle(tester, find.byType(ProductCard).at(i % 3));
+      await gesture.moveTo(
+        tester.getCenter(find.byType(ProductCard).at((i + 1) % 3)),
+      );
+      await tester.pump();
+    }
+
+    expect(taps, 5);
+    expect(
+      errors.where(
+        (e) =>
+            '$e'.contains('no size') ||
+            '$e'.contains('_debugDuringDeviceUpdate'),
+      ),
+      isEmpty,
+      reason: errors.join('\n'),
+    );
+  });
 }
 
 void _noop() {}
