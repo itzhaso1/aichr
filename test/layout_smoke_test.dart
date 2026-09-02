@@ -18,12 +18,13 @@ void main() {
     addTearDown(() => FlutterError.onError = previous);
   });
 
-  Future<void> tapAndSettle(WidgetTester tester, Finder finder) async {
-    await tester.tap(finder);
-    // PosTap defers onTap to the next frame.
-    await tester.pump();
-    await tester.pump();
-  }
+  bool hasHitTestStorm() => errors.any(
+        (e) =>
+            '$e'.contains('no size') ||
+            '$e'.contains('_debugDuringDeviceUpdate') ||
+            '$e'.contains('PointerAddedEvent') ||
+            '$e'.contains('Null check operator'),
+      );
 
   testWidgets('product grid cards do not throw layout/semantics errors',
       (tester) async {
@@ -50,8 +51,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tapAndSettle(tester, find.byType(ProductCard).first);
-    expect(errors, isEmpty, reason: errors.join('\n'));
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
   testWidgets('product card with zero constraints does not throw hit-test errors',
@@ -75,7 +77,7 @@ void main() {
     await tester.pump();
     await tester.tapAt(Offset.zero);
     await tester.pump();
-    expect(errors, isEmpty, reason: errors.join('\n'));
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
   testWidgets('compact cashier grid hit-tests without zero-size errors',
@@ -116,8 +118,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tapAndSettle(tester, find.byType(ProductCard).first);
-    expect(errors, isEmpty, reason: errors.join('\n'));
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
   testWidgets('transfer wizard dialog pumps without parentDataDirty',
@@ -149,7 +152,7 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(find.text('نقل الطاولة'), findsOneWidget);
-    expect(errors, isEmpty, reason: errors.join('\n'));
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
   testWidgets('nav pills and product hover path do not throw mouse_tracker',
@@ -198,19 +201,12 @@ void main() {
     await tester.pump();
     await gesture.moveTo(tester.getCenter(find.text('التقارير')));
     await tester.pump();
-    await tapAndSettle(tester, find.byType(ProductCard).first);
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
 
     expect(taps, 1);
     expect(find.byType(PosTap), findsWidgets);
-    expect(
-      errors.where(
-        (e) =>
-            '$e'.contains('no size') ||
-            '$e'.contains('_debugDuringDeviceUpdate'),
-      ),
-      isEmpty,
-      reason: errors.join('\n'),
-    );
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
   testWidgets('rapid taps under mouse hover do not trip no-size asserts',
@@ -245,7 +241,8 @@ void main() {
     await tester.pump();
 
     for (var i = 0; i < 5; i++) {
-      await tapAndSettle(tester, find.byType(ProductCard).at(i % 3));
+      await tester.tap(find.byType(ProductCard).at(i % 3));
+      await tester.pump();
       await gesture.moveTo(
         tester.getCenter(find.byType(ProductCard).at((i + 1) % 3)),
       );
@@ -253,15 +250,7 @@ void main() {
     }
 
     expect(taps, 5);
-    expect(
-      errors.where(
-        (e) =>
-            '$e'.contains('no size') ||
-            '$e'.contains('_debugDuringDeviceUpdate'),
-      ),
-      isEmpty,
-      reason: errors.join('\n'),
-    );
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 }
 

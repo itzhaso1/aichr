@@ -396,8 +396,10 @@ class ProductCard extends StatelessWidget {
                                     width: w,
                                     fadeInDuration: Duration.zero,
                                     fadeOutDuration: Duration.zero,
-                                    memCacheWidth:
-                                        (w * 2).round().clamp(64, 512),
+                                    memCacheWidth: (w * 2)
+                                        .round()
+                                        .clamp(64, 512)
+                                        .toInt(),
                                     placeholder: (_, _) => const ColoredBox(
                                       color: HasimColors.surfaceSoft,
                                     ),

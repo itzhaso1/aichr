@@ -158,25 +158,21 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       db.readCursor(workspaceId),
     ]).then((values) {
       if (!mounted) return;
-      // Defer past any in-flight mouse-tracker update.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final counts = values[0] as SyncQueueCounts;
-        final lastPush = values[1] as DateTime?;
-        final lastPull = values[2] as DateTime?;
-        DateTime? last;
-        if (lastPush != null && lastPull != null) {
-          last = lastPush.isAfter(lastPull) ? lastPush : lastPull;
-        } else {
-          last = lastPush ?? lastPull;
-        }
-        setState(() {
-          _pendingSync = counts.waiting;
-          _failedSync = counts.failed;
-          _lastSyncAt = last;
-          _syncCursor = values[3] as String?;
-          _syncDeviceId = ref.read(deviceIdHeaderProvider);
-        });
+      final counts = values[0] as SyncQueueCounts;
+      final lastPush = values[1] as DateTime?;
+      final lastPull = values[2] as DateTime?;
+      DateTime? last;
+      if (lastPush != null && lastPull != null) {
+        last = lastPush.isAfter(lastPull) ? lastPush : lastPull;
+      } else {
+        last = lastPush ?? lastPull;
+      }
+      setState(() {
+        _pendingSync = counts.waiting;
+        _failedSync = counts.failed;
+        _lastSyncAt = last;
+        _syncCursor = values[3] as String?;
+        _syncDeviceId = ref.read(deviceIdHeaderProvider);
       });
     });
   }
