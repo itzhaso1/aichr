@@ -9,6 +9,7 @@ import '../../core/pos/pos_labels.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import 'table_detail_screen.dart';
 import 'table_workspace.dart';
@@ -215,9 +216,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   Widget _tableCard(Map<String, dynamic> table) {
     final occupied = table['status'] == 'occupied';
     final hasSession = table['session_id'] != null;
-    final total = ((table['total'] as num?) ?? 0).toDouble();
-    final orders = table['open_orders_count'] ?? table['orders_count'] ?? 0;
-    final id = (table['id'] as num?)?.toInt();
+    final total = asDoubleOr(table['total']);
+    final orders = asIntOr(table['open_orders_count'] ?? table['orders_count']);
+    final id = asInt(table['id']);
     if (id == null) {
       return const SizedBox.shrink();
     }

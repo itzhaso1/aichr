@@ -153,16 +153,18 @@ class LocalFinanceRepository {
         'takeaway_sales_total': takeawaySales,
       },
       'channel_stats': {
-        'table': {'sales_total': tableSales, 'orders_count': dayOrders.where((o) => o.orderType == 'table').length},
-        'takeaway': {
-          'sales_total': takeawaySales,
-          'orders_count':
-              dayOrders.where((o) => o.orderType != 'table').length,
-        },
+        'table': dayOrders.where((o) => o.orderType == 'table').length,
+        'takeaway': dayOrders.where((o) => o.orderType == 'takeaway').length,
+        'delivery': dayOrders.where((o) => o.orderType == 'delivery').length,
       },
       'payment_methods': [
         for (final e in byMethod.entries)
-          {'method': e.key, 'total': e.value, 'count': 1},
+          {
+            'method': e.key,
+            'total': e.value,
+            'orders_count': 1,
+            'count': 1,
+          },
       ],
       'invoices': invoices,
       'closed_orders': closedOrders,

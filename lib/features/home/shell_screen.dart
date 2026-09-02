@@ -22,10 +22,10 @@ import '../../core/pos/pos_errors.dart';
 import '../../core/pos/pos_mode.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/sync/pos_sync_coordinator.dart';
-import '../cart/payment_sheet.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../admin/admin_placeholders.dart';
 import '../cart/cart_controller.dart';
@@ -38,6 +38,7 @@ import '../orders/orders_list.dart';
 import '../reports/daily_reports_panel.dart';
 import '../settings/settings_panel.dart';
 import '../tables/tables_board.dart';
+import '../../core/pos/domain/pricing_service.dart';
 
 enum _PosSection {
   cashier,
@@ -325,7 +326,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     if (settings is Map && settings['tax_rate'] != null) {
       ref
           .read(cartControllerProvider.notifier)
-          .setTaxRate((settings['tax_rate'] as num).toDouble());
+          .setTaxRate(asDoubleOr(settings['tax_rate']));
     }
     if (data['permissions'] is Map) {
       final perms = Map<String, dynamic>.from(data['permissions'] as Map);
@@ -556,8 +557,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     }
     ref.read(currentShiftIdProvider.notifier).state = shiftId;
 
-    final paid = await showPaymentSheet(context: context, total: cart.total);
-    if (paid == null || paid.payments.isEmpty) return;
+    // Cashier checkout: create the order immediately — no payment dialog.
+    // Default tender is cash for the full cart total.
+    final payments = <PaymentTender>[
+      PaymentTender(method: 'cash', amount: Money.round(cart.total)),
+    ];
 
     _checkoutInFlight = true;
     _checkoutClientRef ??= const Uuid().v4();
@@ -585,6 +589,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
                   openedByUserId: ref.read(currentLocalUserIdProvider),
                 );
       final store = await ref.read(localAuthServiceProvider).anyStore();
+      final resolvedPerms = CashierPermissions.resolve(
+        ref.read(cashierPermissionsProvider),
+        session?.permissions,
+      );
       final result = await ref
           .read(checkoutServiceProvider)
           .execute(
@@ -595,7 +603,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               clientReference: clientRef,
               orderType: cart.channel.name,
               lines: [for (final line in cart.lines) line.toPriced()],
-              payments: paid.payments,
+              payments: payments,
               tableLocalId: cart.tableLocalId,
               tableServerId: cart.tableId,
               sessionLocalId: sessionId,
@@ -609,7 +617,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               allowNegativeStock: store?.allowNegativeStock ?? false,
               connected: !standalone && ref.read(posConnectedModeProvider),
               invoicePrefix: store?.invoicePrefix ?? 'INV-',
-              permissions: session?.permissions ?? const {},
+              permissions: resolvedPerms,
               clearDraftChannel: cart.channel.name,
               clearDraftTableLocalId: cart.tableLocalId,
             ),
@@ -1171,11 +1179,11 @@ class _ProductsPanel extends ConsumerWidget {
                       .read(cartControllerProvider.notifier)
                       .addItem(
                         productLocalId: '${hit['local_id']}',
-                        menuItemId: hit['id'] is int ? hit['id'] as int : null,
+                        menuItemId: asInt(hit['id']),
                         name: '${hit['name']}',
-                        unitPrice: (hit['price'] as num?)?.toDouble() ?? 0,
-                        taxRate: (hit['tax_rate'] as num?)?.toDouble() ?? 0,
-                        cost: (hit['cost'] as num?)?.toDouble() ?? 0,
+                        unitPrice: asDoubleOr(hit['price']),
+                        taxRate: asDoubleOr(hit['tax_rate']),
+                        cost: asDoubleOr(hit['cost']),
                         sku: hit['sku'] as String?,
                         barcode: hit['barcode'] as String?,
                       );
@@ -1256,15 +1264,15 @@ class _ProductsPanel extends ConsumerWidget {
       itemCount: items.length,
       itemBuilder: (context, index) {
         final item = items[index];
-        final id = (item['id'] as num?)?.toInt() ?? 0;
-        final name = (item['name'] as String?) ?? '';
-        final price = (item['price'] as num?)?.toDouble() ?? 0;
+        final id = asIntOr(item['id']);
+        final name = '${item['name'] ?? ''}';
+        final price = asDoubleOr(item['price']);
         final available =
             item['is_active'] != false && item['availability'] != 'unavailable';
         return ProductCard(
           name: name,
           priceLabel: price.toStringAsFixed(2),
-          currency: (item['currency'] as String?) ?? 'SAR',
+          currency: '${item['currency'] ?? 'SAR'}',
           imageUrl: item['image_url'] as String?,
           sku: item['sku'] as String?,
           available: available,
@@ -1279,8 +1287,8 @@ class _ProductsPanel extends ConsumerWidget {
                   menuItemId: id == 0 ? null : id,
                   name: name,
                   unitPrice: price,
-                  taxRate: (item['tax_rate'] as num?)?.toDouble() ?? 0,
-                  cost: (item['cost'] as num?)?.toDouble() ?? 0,
+                  taxRate: asDoubleOr(item['tax_rate']),
+                  cost: asDoubleOr(item['cost']),
                   sku: item['sku'] as String?,
                   barcode: item['barcode'] as String?,
                 );
@@ -1408,7 +1416,8 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                   _TablePickerField(
                     tables: _tables,
                     selectedId: cart.tableId,
-                    onSelected: notifier.setTable,
+                    onSelected: (id, {String? localId}) =>
+                        notifier.setTable(id, tableLocalId: localId),
                   ),
                 ],
                 const SizedBox(height: 8),
@@ -1630,6 +1639,12 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
   }
 }
 
+class _TablePick {
+  const _TablePick({required this.id, this.localId});
+  final int id;
+  final String? localId;
+}
+
 class _TablePickerField extends StatelessWidget {
   const _TablePickerField({
     required this.tables,
@@ -1639,11 +1654,11 @@ class _TablePickerField extends StatelessWidget {
 
   final List<Map<String, dynamic>> tables;
   final int? selectedId;
-  final ValueChanged<int?> onSelected;
+  final void Function(int? id, {String? localId}) onSelected;
 
   String get _label {
     for (final t in tables) {
-      if ((t['id'] as num?)?.toInt() == selectedId) {
+      if (asInt(t['id'] ?? t['server_id']) == selectedId) {
         return '${t['name']}';
       }
     }
@@ -1651,7 +1666,7 @@ class _TablePickerField extends StatelessWidget {
   }
 
   Future<void> _open(BuildContext context) async {
-    final picked = await showModalBottomSheet<int>(
+    final picked = await showModalBottomSheet<_TablePick>(
       context: context,
       showDragHandle: true,
       builder: (ctx) {
@@ -1678,15 +1693,27 @@ class _TablePickerField extends StatelessWidget {
                 for (final t in tables)
                   ListTile(
                     title: Text('${t['name']}'),
-                    selected: (t['id'] as num?)?.toInt() == selectedId,
-                    onTap: () => Navigator.pop(ctx, (t['id'] as num).toInt()),
+                    selected: asInt(t['id'] ?? t['server_id']) == selectedId,
+                    onTap: () {
+                      final id = asInt(t['id'] ?? t['server_id']);
+                      if (id == null) return;
+                      Navigator.pop(
+                        ctx,
+                        _TablePick(
+                          id: id,
+                          localId: t['local_id']?.toString(),
+                        ),
+                      );
+                    },
                   ),
             ],
           ),
         );
       },
     );
-    if (picked != null) onSelected(picked);
+    if (picked != null) {
+      onSelected(picked.id, localId: picked.localId);
+    }
   }
 
   @override

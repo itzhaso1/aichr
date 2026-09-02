@@ -11,6 +11,7 @@ import '../../core/network/cashier_link.dart';
 import '../../core/pos/pos_labels.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 /// Count of `new` menu orders for nav badge.
@@ -114,13 +115,14 @@ class _MenuOrdersFeedState extends ConsumerState<MenuOrdersFeed> {
           }
         }
       }
-      final latestId = (data['latest_id'] as num?)?.toInt();
+      final latestId = asInt(data['latest_id']);
       if (_lastSeenId != null &&
           incremental.isNotEmpty &&
           mounted &&
           silent) {
         final newest = incremental.first;
-        final table = newest['table_name'] ?? newest['table']?['name'] ?? '—';
+        final table =
+            newest['table_name'] ?? nestedName(newest['table'], fallback: '—');
         final number = newest['order_number'] ?? newest['id'];
         if (_soundEnabled) {
           await ref.read(menuSoundServiceProvider).playNewOrder();
@@ -157,7 +159,7 @@ class _MenuOrdersFeedState extends ConsumerState<MenuOrdersFeed> {
       if (latestId != null && latestId > 0) {
         _lastSeenId = latestId;
       } else if (list.isNotEmpty) {
-        _lastSeenId = (list.first['id'] as num?)?.toInt() ?? _lastSeenId;
+        _lastSeenId = asInt(list.first['id']) ?? _lastSeenId;
       }
       final newCount =
           list.where((o) => o['pos_status'] == 'new').length;
@@ -359,7 +361,7 @@ class _MenuOrdersFeedState extends ConsumerState<MenuOrdersFeed> {
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      'الطاولة: ${order['table']?['name'] ?? '—'} · المصدر: ${(order['source'] as String?) ?? 'qr_menu'}',
+                                      'الطاولة: ${nestedName(order['table'])} · المصدر: ${order['source']?.toString() ?? 'qr_menu'}',
                                       style: const TextStyle(fontSize: 12),
                                     ),
                                     Text(
@@ -402,8 +404,7 @@ class _MenuOrdersFeedState extends ConsumerState<MenuOrdersFeed> {
                                             }(),
                                             options: _statusOptions,
                                             onChanged: (v) {
-                                              final id =
-                                                  (order['id'] as num?)?.toInt();
+                                              final id = asInt(order['id']);
                                               if (id != null) {
                                                 _updateStatus(id, v);
                                               }
@@ -412,7 +413,7 @@ class _MenuOrdersFeedState extends ConsumerState<MenuOrdersFeed> {
                                         ),
                                         const SizedBox(width: 12),
                                         Text(
-                                          ((order['total_amount'] as num?) ?? 0)
+                                          asDoubleOr(order['total_amount'])
                                               .toStringAsFixed(2),
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w900,

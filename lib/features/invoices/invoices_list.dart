@@ -32,12 +32,15 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   void initState() {
     super.initState();
     _date = DateTime.now();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
   }
 
   String get _dateQuery => DateFormat('yyyy-MM-dd').format(_date);
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -48,18 +51,22 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
 
     // Local first — never white-screen offline.
     if (workspaceId != null && workspaceId > 0) {
-      final local = await finance.listInvoices(
-        workspaceId: workspaceId,
-        onDate: _date,
-      );
-      if (!mounted) return;
-      if (local.isNotEmpty) {
-        setState(() {
-          _invoices = local;
-          _loading = false;
-          _stale = true;
-          _error = null;
-        });
+      try {
+        final local = await finance.listInvoices(
+          workspaceId: workspaceId,
+          onDate: _date,
+        );
+        if (!mounted) return;
+        if (local.isNotEmpty) {
+          setState(() {
+            _invoices = local;
+            _loading = false;
+            _stale = true;
+            _error = null;
+          });
+        }
+      } catch (_) {
+        // Continue to remote / empty state.
       }
     }
 
@@ -82,12 +89,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       final data = await ref
           .read(cashierApiProvider)
           .get('/invoices', query: {'date': _dateQuery});
-      final list = <Map<String, dynamic>>[];
-      if (data['invoices'] is List) {
-        for (final item in data['invoices'] as List) {
-          if (item is Map) list.add(Map<String, dynamic>.from(item));
-        }
-      }
+      final list = asMapList(data['invoices']);
       if (!mounted) return;
       setState(() {
         if (list.isNotEmpty || _invoices.isEmpty) {
@@ -96,9 +98,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
         _loading = false;
         _stale = false;
         _error = null;
-        _workspaceName = boot['workspace'] is Map
-            ? (boot['workspace']['name'] as String?)
-            : null;
+        final ws = asStringKeyedMap(boot['workspace']);
+        _workspaceName = ws['name']?.toString() ?? _workspaceName;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -138,58 +139,72 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   }
 
   Future<void> _openInvoice(Map<String, dynamic> invoice) async {
-    final workspaceId = ref.read(workspaceIdProvider);
-    final localId = '${invoice['local_id'] ?? ''}';
-    Map<String, dynamic>? local;
-    if (workspaceId != null && localId.isNotEmpty) {
-      local = await ref
-          .read(localFinanceRepositoryProvider)
-          .getInvoice(workspaceId: workspaceId, localId: localId);
-    }
-    final session = ref.read(authControllerProvider).valueOrNull;
-    final serverId = asInt(invoice['id'] ?? invoice['server_id']);
-    if (serverId != null &&
-        serverId > 0 &&
-        !PosMode.isStandaloneRuntime(
-          isLocalMode: session?.isLocalMode == true,
-          token: session?.token,
-        )) {
-      try {
-        final data = await ref
-            .read(cashierApiProvider)
-            .get('/invoices/$serverId');
-        if (!mounted) return;
-        final inv = data['invoice'] is Map
-            ? Map<String, dynamic>.from(data['invoice'] as Map)
-            : data;
-        inv['store_name'] = _workspaceName ?? 'كاشير حاسم';
-        setState(() => _selected = inv);
-        return;
-      } catch (_) {
-        // Fall through to local draft.
+    try {
+      final workspaceId = ref.read(workspaceIdProvider);
+      final localId = '${invoice['local_id'] ?? ''}';
+      Map<String, dynamic>? local;
+      if (workspaceId != null && localId.isNotEmpty) {
+        local = await ref
+            .read(localFinanceRepositoryProvider)
+            .getInvoice(workspaceId: workspaceId, localId: localId);
       }
+      final session = ref.read(authControllerProvider).valueOrNull;
+      final serverId = asInt(invoice['id'] ?? invoice['server_id']);
+      if (serverId != null &&
+          serverId > 0 &&
+          !PosMode.isStandaloneRuntime(
+            isLocalMode: session?.isLocalMode == true,
+            token: session?.token,
+          )) {
+        try {
+          final data = await ref
+              .read(cashierApiProvider)
+              .get('/invoices/$serverId');
+          if (!mounted) return;
+          final inv = data['invoice'] is Map
+              ? Map<String, dynamic>.from(data['invoice'] as Map)
+              : Map<String, dynamic>.from(data);
+          inv['store_name'] = _workspaceName ?? 'كاشير حاسم';
+          setState(() => _selected = inv);
+          return;
+        } catch (_) {
+          // Fall through to local draft.
+        }
+      }
+      if (!mounted) return;
+      final draft = Map<String, dynamic>.from(local ?? invoice);
+      draft['store_name'] = _workspaceName ?? 'كاشير حاسم';
+      setState(() => _selected = draft);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر فتح الفاتورة: $e')),
+      );
     }
-    if (!mounted) return;
-    final draft = Map<String, dynamic>.from(local ?? invoice);
-    draft['store_name'] = _workspaceName ?? 'كاشير حاسم';
-    setState(() => _selected = draft);
   }
 
   Future<void> _printSelected({required bool reprint}) async {
     final inv = _selected;
     if (inv == null) return;
-    final printer = await ref.read(printerServiceFutureProvider.future);
-    final result = await printer.printInvoice(inv);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          reprint
-              ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
-              : result.message,
+    try {
+      final printer = await ref.read(printerServiceFutureProvider.future);
+      final result = await printer.printInvoice(inv);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            reprint
+                ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
+                : result.message,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e')));
+    }
   }
 
   @override
@@ -290,8 +305,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        inv['table'] is Map
-                                            ? 'طاولة: ${inv['table']['name'] ?? '—'}'
+                                        inv['table'] != null
+                                            ? 'طاولة: ${nestedName(inv['table'])}'
                                             : (inv['is_local'] == true
                                                   ? 'محلية — بانتظار المزامنة'
                                                   : 'فاتورة'),
@@ -340,9 +355,7 @@ class _InvoiceDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = invoice['items'] is List
-        ? (invoice['items'] as List).whereType<Map>().toList()
-        : const <Map>[];
+    final items = asMapList(invoice['items']);
     final tax = invoice['tax_amount'];
     final payment = invoice['payment_method'];
     return ListView(
@@ -373,7 +386,7 @@ class _InvoiceDetail extends StatelessWidget {
         Text(
           'التاريخ: ${invoice['closed_at'] ?? invoice['created_at'] ?? '—'}',
         ),
-        Text('الطاولة: ${invoice['table']?['name'] ?? '—'}'),
+        Text('الطاولة: ${nestedName(invoice['table'])}'),
         if (payment != null) Text('الدفع: $payment'),
         const Divider(),
         for (final item in items)

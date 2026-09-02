@@ -12,6 +12,7 @@ import '../../core/offline/offline_store.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 class DailyReportsPanel extends ConsumerStatefulWidget {
@@ -249,17 +250,17 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   }
 
   Widget _buildReportBody() {
-    final summary = _asMap(_data?['summary']);
-    final channels = _asMap(_data?['channel_stats']);
-    final top = _asMaps(_data?['top_items']);
-    final byType = _asMaps(_data?['quantity_by_type']);
-    final payments = _asMaps(_data?['payment_methods']);
-    final invoices = _asMaps(_data?['invoices']);
-    final byHour = _asMaps(_data?['sales_by_hour']);
-    final customers = _asMaps(_data?['customer_summary']);
-    final recentOps = _asMaps(_data?['recent_operations']);
-    final closedOrders = _asMaps(_data?['closed_orders']);
-    final allOrders = _asMaps(_data?['all_orders']);
+    final summary = asStringKeyedMap(_data?['summary']);
+    final channels = asStringKeyedMap(_data?['channel_stats']);
+    final top = asMapList(_data?['top_items']);
+    final byType = asMapList(_data?['quantity_by_type']);
+    final payments = asMapList(_data?['payment_methods']);
+    final invoices = asMapList(_data?['invoices']);
+    final byHour = asMapList(_data?['sales_by_hour']);
+    final customers = asMapList(_data?['customer_summary']);
+    final recentOps = asMapList(_data?['recent_operations']);
+    final closedOrders = asMapList(_data?['closed_orders']);
+    final allOrders = asMapList(_data?['all_orders']);
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -359,15 +360,15 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             runSpacing: 8,
             children: [
               _metric(
-                '${_int(summary['table_orders_count'] ?? channels['table'])}',
+                '${_channelCount(summary, channels, 'table')}',
                 'طاولات',
               ),
               _metric(
-                '${_int(summary['takeaway_orders_count'] ?? channels['takeaway'])}',
+                '${_channelCount(summary, channels, 'takeaway')}',
                 'خارجي',
               ),
               _metric(
-                '${_int(summary['delivery_orders_count'] ?? channels['delivery'])}',
+                '${_channelCount(summary, channels, 'delivery')}',
                 'توصيل',
               ),
             ],
@@ -385,7 +386,10 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             ),
             const SizedBox(height: 8),
             for (final row in payments)
-              _rowCard(_str(row['method']), '× ${_str(row['orders_count'])}'),
+              _rowCard(
+                _str(row['method']),
+                '× ${_str(row['orders_count'] ?? row['count'])}',
+              ),
           ],
           if (byType.isNotEmpty) ...[
             const SizedBox(height: 16),
@@ -452,8 +456,8 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           else
             for (final inv in invoices)
               _rowCard(
-                '${_str(inv['invoice_number'])} · ${_nestedName(inv['table'])}',
-                _num(inv['total_amount']).toStringAsFixed(2),
+                '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
+                asDoubleOr(inv['total_amount']).toStringAsFixed(2),
                 highlight: true,
               ),
           const SizedBox(height: 16),
@@ -467,8 +471,8 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           else
             for (final order in closedOrders.take(30))
               _rowCard(
-                '#${_str(order['order_number'] ?? order['id'])} · ${_nestedName(order['table'], fallback: _str(order['order_type']))}',
-                _num(order['total_amount']).toStringAsFixed(2),
+                '#${_str(order['order_number'] ?? order['id'])} · ${nestedName(order['table'], fallback: _str(order['order_type']))}',
+                asDoubleOr(order['total_amount']).toStringAsFixed(2),
               ),
           const SizedBox(height: 16),
           const Text(
@@ -495,8 +499,11 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           else
             for (final log in recentOps)
               _rowCard(
-                '${_str(log['action'])} · ${_str(log['entity_type'])} #${_str(log['entity_id'])}',
-                '${_nestedName(log['user'], fallback: 'النظام')} · ${_str(log['occurred_at'])}',
+                _str(
+                  log['label'] ??
+                      '${_str(log['action'])} · ${_str(log['entity_type'])} #${_str(log['entity_id'])}',
+                ),
+                '${nestedName(log['user'], fallback: 'النظام')} · ${_str(log['occurred_at'] ?? log['at'])}',
               ),
           const SizedBox(height: 24),
         ],
@@ -512,36 +519,26 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     final cards = <(String, int, int, bool)>[
       (
         'اليوم · داخل المطعم (طاولة)',
-        _int(
-          summary['table_orders_count'] ?? channels['table'] ?? live['table'],
-        ),
-        _int(live['open_table']),
+        _channelCount(summary, channels, 'table', live: live),
+        asIntOr(live['open_table']),
         false,
       ),
       (
         'اليوم · طلب خارجي',
-        _int(
-          summary['takeaway_orders_count'] ??
-              channels['takeaway'] ??
-              live['takeaway'],
-        ),
-        _int(live['open_takeaway']),
+        _channelCount(summary, channels, 'takeaway', live: live),
+        asIntOr(live['open_takeaway']),
         false,
       ),
       (
         'اليوم · توصيل',
-        _int(
-          summary['delivery_orders_count'] ??
-              channels['delivery'] ??
-              live['delivery'],
-        ),
-        _int(live['open_delivery']),
+        _channelCount(summary, channels, 'delivery', live: live),
+        asIntOr(live['open_delivery']),
         false,
       ),
       (
         'إجمالي طلبات اليوم',
-        _int(summary['orders_count'] ?? live['total']),
-        _int(live['open_total'] ?? summary['open_orders_count']),
+        asIntOr(summary['orders_count'] ?? live['total']),
+        asIntOr(live['open_total'] ?? summary['open_orders_count']),
         true,
       ),
     ];
@@ -619,40 +616,30 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     );
   }
 
-  Map<String, dynamic> _asMap(dynamic raw) {
-    if (raw is Map<String, dynamic>) return raw;
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const {};
+  /// Channel count may be a bare int or `{orders_count: n}` from local SQLite.
+  int _channelCount(
+    Map<String, dynamic> summary,
+    Map<String, dynamic> channels,
+    String key, {
+    Map<String, dynamic>? live,
+  }) {
+    final fromSummary = summary['${key}_orders_count'];
+    if (fromSummary != null) return asIntOr(fromSummary);
+    final raw = channels[key] ?? live?[key];
+    if (raw is Map) {
+      return asIntOr(raw['orders_count'] ?? raw['count'] ?? raw['total']);
+    }
+    return asIntOr(raw);
   }
 
-  List<Map<String, dynamic>> _asMaps(dynamic raw) {
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-  }
+  num _num(dynamic value) => asDoubleOr(value);
 
-  num _num(dynamic value) {
-    if (value is num) return value;
-    if (value is String) return num.tryParse(value) ?? 0;
-    return 0;
-  }
-
-  int _int(dynamic value) => _num(value).toInt();
+  int _int(dynamic value) => asIntOr(value);
 
   String _str(dynamic value) {
     if (value == null) return '—';
     final s = value.toString().trim();
     return s.isEmpty ? '—' : s;
-  }
-
-  String _nestedName(dynamic value, {String fallback = '—'}) {
-    if (value is Map) {
-      final name = value['name'];
-      if (name != null && '$name'.trim().isNotEmpty) return '$name';
-    }
-    return fallback;
   }
 
   Widget _metric(String value, String label, {bool highlight = false}) {

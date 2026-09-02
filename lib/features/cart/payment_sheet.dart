@@ -148,14 +148,11 @@ class _PaymentSheetState extends State<_PaymentSheet> {
                 ),
             ],
           ),
-          TextField(
+          TextFormField(
+            key: ValueKey('pay-amount-$index-${line.method}'),
+            initialValue: line.amount.toStringAsFixed(2),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(labelText: 'المبلغ'),
-            controller:
-                TextEditingController(text: line.amount.toStringAsFixed(2))
-                  ..selection = TextSelection.collapsed(
-                    offset: line.amount.toStringAsFixed(2).length,
-                  ),
             onChanged: (v) =>
                 setState(() => line.amount = double.tryParse(v) ?? 0),
           ),

@@ -13,6 +13,7 @@ import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/pos_labels.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/sync/pos_sync_coordinator.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/widgets/hasim_widgets.dart';
@@ -56,7 +57,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   int? get _sessionId {
-    final id = (_detail?['session_id'] as num?)?.toInt();
+    final id = asInt(_detail?['session_id']);
     if (id == null || id == 0) return null;
     return id;
   }
@@ -130,7 +131,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       final isPending = order['is_local_pending'] == true;
       if (!isPending &&
           serverId is num &&
-          server.any((row) => (row['id'] as num?)?.toInt() == serverId.toInt())) {
+          server.any((row) => asInt(row['id']) == serverId.toInt())) {
         continue;
       }
       if (!isPending) continue;
@@ -155,7 +156,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       if (_filter != 'all' && _filter != key) return false;
       if (q.isEmpty) return true;
       final hay =
-          '${order['order_number']}|${order['customer']?['name']}|$status'
+          '${order['order_number']}|${nestedName(order['customer'], fallback: '')}|$status'
               .toLowerCase();
       return hay.contains(q);
     }).toList();
@@ -175,9 +176,9 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           'pos_menu_item_id': item['pos_menu_item_id'] ?? item['product_id'],
           'name':
               '${item['product_name'] ?? item['name']}${item['variant_name'] != null ? ' - ${item['variant_name']}' : ''}',
-          'quantity': (item['quantity'] as num?)?.toInt() ?? 1,
-          'unit_price': (item['unit_price'] as num?)?.toDouble() ?? 0,
-          'total': (item['total_amount'] as num?)?.toDouble() ?? 0,
+          'quantity': asIntOr(item['quantity'], 1),
+          'unit_price': asDoubleOr(item['unit_price']),
+          'total': asDoubleOr(item['total_amount']),
           'selected_qty': 0,
         });
       }
@@ -874,7 +875,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       );
       return;
     }
-    final total = ((_detail?['total'] as num?) ?? 0).toDouble();
+    final total = asDoubleOr(_detail?['total']);
     final selected = await showDialog<List<Map<String, dynamic>>>(
       context: context,
       builder: (ctx) => SplitBillWizard(items: items, sessionTotal: total),
@@ -1011,20 +1012,20 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     // Compute totals from local + server orders so close works fully offline.
     final billable =
         _orders.where((o) => o['pos_status'] != 'cancelled').toList();
-    var subtotal = ((_detail?['subtotal'] as num?) ?? 0).toDouble();
-    var discount = ((_detail?['discount_amount'] as num?) ?? 0).toDouble();
-    var tax = ((_detail?['tax_amount'] as num?) ?? 0).toDouble();
-    var total = ((_detail?['total'] as num?) ?? 0).toDouble();
+    var subtotal = asDoubleOr(_detail?['subtotal']);
+    var discount = asDoubleOr(_detail?['discount_amount']);
+    var tax = asDoubleOr(_detail?['tax_amount']);
+    var total = asDoubleOr(_detail?['total']);
     if (total <= 0 && billable.isNotEmpty) {
       subtotal = 0;
       discount = 0;
       tax = 0;
       total = 0;
       for (final o in billable) {
-        subtotal += ((o['subtotal'] as num?) ?? 0).toDouble();
-        discount += ((o['discount_amount'] as num?) ?? 0).toDouble();
-        tax += ((o['tax_amount'] as num?) ?? 0).toDouble();
-        total += ((o['total_amount'] as num?) ?? 0).toDouble();
+        subtotal += asDoubleOr(o['subtotal']);
+        discount += asDoubleOr(o['discount_amount']);
+        tax += asDoubleOr(o['tax_amount']);
+        total += asDoubleOr(o['total_amount']);
       }
     }
 
@@ -1037,13 +1038,13 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         discount: discount,
         tax: tax,
         total: total,
-        ordersCount: (_detail?['orders_count'] as num?)?.toInt() ??
+        ordersCount: asInt(_detail?['orders_count']) ??
             billable.length,
         orders: billable
             .map(
               (o) => {
                 'label': '#${o['order_number'] ?? o['id']}',
-                'total': ((o['total_amount'] as num?) ?? 0).toDouble(),
+                'total': asDoubleOr(o['total_amount']),
               },
             )
             .toList(),
@@ -1094,7 +1095,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         title: const Text('تم إغلاق الطاولة'),
         content: Text(
           'تم إنشاء الفاتورة ${invoice['invoice_number'] ?? invoice['id']}\n'
-          'الإجمالي: ${((invoice['total_amount'] as num?) ?? 0).toStringAsFixed(2)}',
+          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}',
         ),
         actions: [
           TextButton(
@@ -1111,7 +1112,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (choice != 'print') return;
     try {
       Map<String, dynamic> full = invoice;
-      final serverId = (invoice['id'] as num?)?.toInt();
+      final serverId = asInt(invoice['id']);
       if (serverId != null && serverId > 0) {
         try {
           final show = await ref
@@ -1305,7 +1306,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             _identityChip('العميل', _customerLabel),
             _identityChip(
               'الإجمالي',
-              ((_detail!['total'] as num?) ?? 0).toStringAsFixed(2),
+              asDoubleOr(_detail!['total']).toStringAsFixed(2),
               highlight: true,
             ),
             _identityChip(
@@ -1414,7 +1415,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: _stat(
-                  (( _detail!['total'] as num?) ?? 0).toStringAsFixed(2),
+                  asDoubleOr(_detail!['total']).toStringAsFixed(2),
                   'الإجمالي',
                   highlight: true,
                 ),
@@ -1422,10 +1423,10 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          _moneyRow('المجموع الفرعي', (_detail!['subtotal'] as num?) ?? 0),
-          _moneyRow('الخصم', (_detail!['discount_amount'] as num?) ?? 0),
-          _moneyRow('الضريبة', (_detail!['tax_amount'] as num?) ?? 0),
-          _moneyRow('الإجمالي النهائي', (_detail!['total'] as num?) ?? 0,
+          _moneyRow('المجموع الفرعي', asDoubleOr(_detail!['subtotal'])),
+          _moneyRow('الخصم', asDoubleOr(_detail!['discount_amount'])),
+          _moneyRow('الضريبة', asDoubleOr(_detail!['tax_amount'])),
+          _moneyRow('الإجمالي النهائي', asDoubleOr(_detail!['total']),
               bold: true),
           if (_canAddOrder) ...[
             const SizedBox(height: 12),
@@ -1730,7 +1731,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                       ),
                                       const SizedBox(width: 8),
                                       Text(
-                                        ((item['unit_price'] as num?) ?? 0)
+                                        asDoubleOr(item['unit_price'])
                                             .toStringAsFixed(2),
                                         style: const TextStyle(
                                           fontSize: 11,
@@ -1739,7 +1740,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                       ),
                                       const SizedBox(width: 8),
                                       Text(
-                                        ((item['total_amount'] as num?) ?? 0)
+                                        asDoubleOr(item['total_amount'])
                                             .toStringAsFixed(2),
                                         style: const TextStyle(
                                           fontSize: 12,
@@ -1753,17 +1754,17 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                               Row(
                                 children: [
                                   Text(
-                                    'خصم ${((order['discount_amount'] as num?) ?? 0).toStringAsFixed(2)}',
+                                    'خصم ${asDoubleOr(order['discount_amount']).toStringAsFixed(2)}',
                                     style: const TextStyle(fontSize: 11),
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    'ضريبة ${((order['tax_amount'] as num?) ?? 0).toStringAsFixed(2)}',
+                                    'ضريبة ${asDoubleOr(order['tax_amount']).toStringAsFixed(2)}',
                                     style: const TextStyle(fontSize: 11),
                                   ),
                                   const Spacer(),
                                   Text(
-                                    ((order['total_amount'] as num?) ?? 0)
+                                    asDoubleOr(order['total_amount'])
                                         .toStringAsFixed(2),
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w900,
@@ -1921,7 +1922,7 @@ class _CloseTableFlowState extends State<CloseTableFlow> {
                               for (final order in widget.orders)
                                 _row(
                                   '${order['label']}',
-                                  ((order['total'] as num?) ?? 0)
+                                  asDoubleOr(order['total'])
                                       .toStringAsFixed(2),
                                 ),
                               const Divider(),
