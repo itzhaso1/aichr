@@ -9,7 +9,9 @@ import '../../core/pos/pos_labels.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 import 'table_detail_screen.dart';
 import 'table_workspace.dart';
 
@@ -179,9 +181,12 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: _load,
-                icon: const Icon(Icons.refresh),
+              PosTap(
+                onTap: _load,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.refresh),
+                ),
               ),
             ],
           ),
@@ -215,9 +220,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   Widget _tableCard(Map<String, dynamic> table) {
     final occupied = table['status'] == 'occupied';
     final hasSession = table['session_id'] != null;
-    final total = ((table['total'] as num?) ?? 0).toDouble();
-    final orders = table['open_orders_count'] ?? table['orders_count'] ?? 0;
-    final id = (table['id'] as num?)?.toInt();
+    final total = asDoubleOr(table['total']);
+    final orders = asIntOr(table['open_orders_count'] ?? table['orders_count']);
+    final id = asInt(table['id']);
     if (id == null) {
       return const SizedBox.shrink();
     }
@@ -225,10 +230,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(HasimRadius.md),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(HasimRadius.md),
+      child: PosTap(
         onTap: () => openTableWorkspace(ref, id),
-        child: Ink(
+        child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(HasimRadius.md),
             border: Border.all(
@@ -286,7 +290,10 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                 children: [
                   Text(
                     'الطلبات: $orders',
-                    style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: HasimColors.muted,
+                    ),
                   ),
                   if (total > 0)
                     Text(

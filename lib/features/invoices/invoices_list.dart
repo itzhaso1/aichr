@@ -4,12 +4,12 @@ import 'package:intl/intl.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
-import '../../core/pos/pos_mode.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 /// Closed cashier invoices — local SQLite first, remote enrichment optional.
 class InvoicesList extends ConsumerStatefulWidget {
@@ -26,18 +26,20 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   late DateTime _date;
   Map<String, dynamic>? _selected;
   String? _workspaceName;
-  var _stale = false;
 
   @override
   void initState() {
     super.initState();
     _date = DateTime.now();
-    _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
   }
 
   String get _dateQuery => DateFormat('yyyy-MM-dd').format(_date);
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -45,82 +47,28 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     });
     final workspaceId = ref.read(workspaceIdProvider);
     final finance = ref.read(localFinanceRepositoryProvider);
-
-    // Local first — never white-screen offline.
-    if (workspaceId != null && workspaceId > 0) {
-      final local = await finance.listInvoices(
-        workspaceId: workspaceId,
-        onDate: _date,
-      );
-      if (!mounted) return;
-      if (local.isNotEmpty) {
-        setState(() {
-          _invoices = local;
-          _loading = false;
-          _stale = true;
-          _error = null;
-        });
-      }
-    }
+    final session = ref.read(authControllerProvider).valueOrNull;
 
     try {
-      final session = ref.read(authControllerProvider).valueOrNull;
-      if (PosMode.isStandaloneRuntime(
-        isLocalMode: session?.isLocalMode == true,
-        token: session?.token,
-      )) {
-        if (!mounted) return;
-        setState(() {
-          _loading = false;
-          _stale = false;
-          _workspaceName =
-              session?.workspace?['name'] as String? ?? 'متجر محلي';
-        });
-        return;
-      }
-      final boot = await ref.read(cashierApiProvider).get('/bootstrap');
-      final data = await ref
-          .read(cashierApiProvider)
-          .get('/invoices', query: {'date': _dateQuery});
-      final list = <Map<String, dynamic>>[];
-      if (data['invoices'] is List) {
-        for (final item in data['invoices'] as List) {
-          if (item is Map) list.add(Map<String, dynamic>.from(item));
-        }
-      }
+      final local = workspaceId != null && workspaceId > 0
+          ? await finance.listInvoices(
+              workspaceId: workspaceId,
+              onDate: _date,
+            )
+          : const <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
-        if (list.isNotEmpty || _invoices.isEmpty) {
-          _invoices = list.isNotEmpty ? list : _invoices;
-        }
+        _invoices = local;
         _loading = false;
-        _stale = false;
         _error = null;
-        _workspaceName = boot['workspace'] is Map
-            ? (boot['workspace']['name'] as String?)
-            : null;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        if (_invoices.isEmpty) {
-          _error = e.message;
-        } else {
-          _stale = true;
-          _error = null;
-        }
+        _workspaceName =
+            session?.workspace?['name'] as String? ?? 'متجر محلي';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        if (_invoices.isEmpty) {
-          _error = e.toString();
-        } else {
-          _stale = true;
-          _error = null;
-        }
+        _error = 'تعذر تحميل الفواتير المحلية: $e';
       });
     }
   }
@@ -138,58 +86,49 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   }
 
   Future<void> _openInvoice(Map<String, dynamic> invoice) async {
-    final workspaceId = ref.read(workspaceIdProvider);
-    final localId = '${invoice['local_id'] ?? ''}';
-    Map<String, dynamic>? local;
-    if (workspaceId != null && localId.isNotEmpty) {
-      local = await ref
-          .read(localFinanceRepositoryProvider)
-          .getInvoice(workspaceId: workspaceId, localId: localId);
-    }
-    final session = ref.read(authControllerProvider).valueOrNull;
-    final serverId = asInt(invoice['id'] ?? invoice['server_id']);
-    if (serverId != null &&
-        serverId > 0 &&
-        !PosMode.isStandaloneRuntime(
-          isLocalMode: session?.isLocalMode == true,
-          token: session?.token,
-        )) {
-      try {
-        final data = await ref
-            .read(cashierApiProvider)
-            .get('/invoices/$serverId');
-        if (!mounted) return;
-        final inv = data['invoice'] is Map
-            ? Map<String, dynamic>.from(data['invoice'] as Map)
-            : data;
-        inv['store_name'] = _workspaceName ?? 'كاشير حاسم';
-        setState(() => _selected = inv);
-        return;
-      } catch (_) {
-        // Fall through to local draft.
+    try {
+      final workspaceId = ref.read(workspaceIdProvider);
+      final localId = '${invoice['local_id'] ?? ''}';
+      Map<String, dynamic>? local;
+      if (workspaceId != null && localId.isNotEmpty) {
+        local = await ref
+            .read(localFinanceRepositoryProvider)
+            .getInvoice(workspaceId: workspaceId, localId: localId);
       }
+      if (!mounted) return;
+      final draft = Map<String, dynamic>.from(local ?? invoice);
+      draft['store_name'] = _workspaceName ?? 'كاشير حاسم';
+      setState(() => _selected = draft);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر فتح الفاتورة: $e')),
+      );
     }
-    if (!mounted) return;
-    final draft = Map<String, dynamic>.from(local ?? invoice);
-    draft['store_name'] = _workspaceName ?? 'كاشير حاسم';
-    setState(() => _selected = draft);
   }
 
   Future<void> _printSelected({required bool reprint}) async {
     final inv = _selected;
     if (inv == null) return;
-    final printer = await ref.read(printerServiceFutureProvider.future);
-    final result = await printer.printInvoice(inv);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          reprint
-              ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
-              : result.message,
+    try {
+      final printer = await ref.read(printerServiceFutureProvider.future);
+      final result = await printer.printInvoice(inv);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            reprint
+                ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
+                : result.message,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e')));
+    }
   }
 
   @override
@@ -214,9 +153,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _stale
-                          ? 'عرض محلي — ستُحدَّث عند عودة الاتصال'
-                          : 'فاتورة مستقلة عن نظام الفوترة الخارجي.',
+                      'فواتير محلية من هذا الجهاز.',
                       style: const TextStyle(
                         fontSize: 12,
                         color: HasimColors.muted,
@@ -271,7 +208,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     itemBuilder: (context, index) {
                       final inv = _invoices[index];
                       return HsCard(
-                        child: InkWell(
+                        child: PosTap(
                           onTap: () => _openInvoice(inv),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -290,11 +227,9 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        inv['table'] is Map
-                                            ? 'طاولة: ${inv['table']['name'] ?? '—'}'
-                                            : (inv['is_local'] == true
-                                                  ? 'محلية — بانتظار المزامنة'
-                                                  : 'فاتورة'),
+                                        inv['table'] != null
+                                            ? 'طاولة: ${nestedName(inv['table'])}'
+                                            : 'فاتورة محلية',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: HasimColors.muted,
@@ -340,9 +275,7 @@ class _InvoiceDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = invoice['items'] is List
-        ? (invoice['items'] as List).whereType<Map>().toList()
-        : const <Map>[];
+    final items = asMapList(invoice['items']);
     final tax = invoice['tax_amount'];
     final payment = invoice['payment_method'];
     return ListView(
@@ -373,7 +306,7 @@ class _InvoiceDetail extends StatelessWidget {
         Text(
           'التاريخ: ${invoice['closed_at'] ?? invoice['created_at'] ?? '—'}',
         ),
-        Text('الطاولة: ${invoice['table']?['name'] ?? '—'}'),
+        Text('الطاولة: ${nestedName(invoice['table'])}'),
         if (payment != null) Text('الدفع: $payment'),
         const Divider(),
         for (final item in items)

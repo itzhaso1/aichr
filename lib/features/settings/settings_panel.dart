@@ -8,10 +8,10 @@ import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_errors.dart';
-import '../../core/pos/pos_mode.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../cart/cart_controller.dart';
 
@@ -61,32 +61,17 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final sound = ref.read(menuSoundServiceProvider);
     final printer = await ref.read(printerServiceFutureProvider.future);
     Map<String, dynamic>? settings;
-    final session = ref.read(authControllerProvider).valueOrNull;
-    if (!PosMode.isStandaloneRuntime(
-      isLocalMode: session?.isLocalMode == true,
-      token: session?.token,
-    )) {
-      try {
-        final bootstrap = await ref.read(cashierApiProvider).get('/bootstrap');
-        if (bootstrap['settings'] is Map) {
-          settings = Map<String, dynamic>.from(bootstrap['settings'] as Map);
-        }
-      } catch (_) {
-        // Keep local defaults if bootstrap fails.
-      }
-    } else {
-      final store = await ref.read(localAuthServiceProvider).anyStore();
-      if (store != null) {
-        settings = {
-          'tax_rate': store.taxRate,
-          'currency': store.currency,
-        };
-      }
+    final store = await ref.read(localAuthServiceProvider).anyStore();
+    if (store != null) {
+      settings = {
+        'tax_rate': store.taxRate,
+        'currency': store.currency,
+      };
     }
     if (!mounted) return;
     setState(() {
       if (settings != null) {
-        _tax.text = ((settings['tax_rate'] as num?) ?? 0).toStringAsFixed(2);
+        _tax.text = asDoubleOr(settings['tax_rate']).toStringAsFixed(2);
         _currency.text = '${settings['currency'] ?? 'SAR'}';
         _sound =
             settings['sound_enabled'] == true ||
@@ -95,7 +80,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ref.read(menuSoundServiceProvider).setEnabled(_sound);
         ref
             .read(cartControllerProvider.notifier)
-            .setTaxRate(((settings['tax_rate'] as num?) ?? 0).toDouble());
+            .setTaxRate(asDoubleOr(settings['tax_rate']));
       } else {
         _sound = sound.enabled;
       }
@@ -125,61 +110,23 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     }
     setState(() => _savingPos = true);
     try {
-      final session = ref.read(authControllerProvider).valueOrNull;
-      if (session?.isLocalMode == true ||
-          PosMode.isStandaloneToken(session?.token)) {
-        final store = await ref.read(localAuthServiceProvider).anyStore();
-        if (store != null) {
-          await ref
-              .read(localAuthServiceProvider)
-              .updateStore(
-                storeId: store.localId,
-                taxRate: tax,
-                currency: _currency.text.trim().toUpperCase(),
-              );
-        }
-        await ref.read(menuSoundServiceProvider).setEnabled(_sound);
-        ref.read(cartControllerProvider.notifier).setTaxRate(tax);
-        if (!mounted) return;
-        setState(() => _savingPos = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ إعدادات المتجر محلياً.')),
-        );
-        return;
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      if (store != null) {
+        await ref
+            .read(localAuthServiceProvider)
+            .updateStore(
+              storeId: store.localId,
+              taxRate: tax,
+              currency: _currency.text.trim().toUpperCase(),
+            );
       }
-      final data = await ref
-          .read(cashierApiProvider)
-          .patch(
-            '/settings/pos',
-            data: {
-              'tax_rate': tax,
-              'new_order_sound': _sound,
-              'enable_delivery': _delivery,
-              'currency': _currency.text.trim().toUpperCase(),
-            },
-          );
       await ref.read(menuSoundServiceProvider).setEnabled(_sound);
-      ref
-          .read(cartControllerProvider.notifier)
-          .setTaxRate(((data['tax_rate'] as num?) ?? tax).toDouble());
-      if (!mounted) return;
-      setState(() {
-        _savingPos = false;
-        _tax.text = ((data['tax_rate'] as num?) ?? tax).toStringAsFixed(2);
-        _currency.text = '${data['currency'] ?? _currency.text}';
-        _sound =
-            data['sound_enabled'] == true || data['new_order_sound'] == true;
-        _delivery = data['enable_delivery'] == true;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ إعدادات الكاشير على الخادم.')),
-      );
-    } on ApiException catch (e) {
+      ref.read(cartControllerProvider.notifier).setTaxRate(tax);
       if (!mounted) return;
       setState(() => _savingPos = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ إعدادات المتجر محلياً.')),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _savingPos = false);
@@ -549,13 +496,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'إعدادات الكاشير (Laravel)',
+                'إعدادات الكاشير المحلية',
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 6),
               Text(
                 canManage
-                    ? 'تُحفظ عبر PATCH /settings/pos'
+                    ? 'تُحفظ محلياً على هذا الجهاز (بدون خادم)'
                     : 'عرض فقط — تحتاج menu.manage للتعديل',
                 style: const TextStyle(fontSize: 12, color: HasimColors.muted),
               ),

@@ -3,14 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/auth/auth_controller.dart';
+import '../core/config/app_config.dart';
 import '../core/theme/hasim_colors.dart';
 import '../core/theme/hasim_theme.dart';
-import '../features/auth/forgot_password_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/pin_login_screen.dart';
 import '../features/auth/pos_blocked_screen.dart';
 import '../features/auth/standalone_setup_screen.dart';
-import '../features/auth/workspace_picker_screen.dart';
 import '../features/home/shell_screen.dart';
 
 /// GoRouter must NOT be rebuilt on every auth state change.
@@ -25,12 +24,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final auth = ref.read(authControllerProvider);
       final loggingIn = state.matchedLocation == '/login';
-      final picking = state.matchedLocation == '/workspaces';
       final splash = state.matchedLocation == '/splash';
-      final forgot = state.matchedLocation == '/forgot-password';
-      final reset = state.matchedLocation == '/reset-password';
       final pin = state.matchedLocation == '/pin';
       final setup = state.matchedLocation == '/standalone-setup';
+      final blocked = state.matchedLocation == '/pos-blocked';
+
+      // Offline-only: cloud auth routes are dead ends.
+      if (AppConfig.offlineOnly) {
+        final cloud = state.matchedLocation == '/forgot-password' ||
+            state.matchedLocation == '/reset-password' ||
+            state.matchedLocation == '/workspaces';
+        if (cloud) return '/login';
+      }
 
       if (auth.isLoading) {
         return splash ? null : '/splash';
@@ -38,17 +43,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       final session = auth.valueOrNull;
       if (session == null) {
-        if (loggingIn || forgot || reset || pin || setup) return null;
+        if (loggingIn || pin || setup) return null;
         return '/login';
+      }
+
+      if (AppConfig.offlineOnly) {
+        if (loggingIn || splash || pin || setup || blocked) {
+          return '/home';
+        }
+        return null;
       }
 
       final needsPick =
           session.workspace == null && session.workspaces.length > 1;
       if (needsPick) {
-        return picking ? null : '/workspaces';
+        return state.matchedLocation == '/workspaces' ? null : '/workspaces';
       }
 
-      if (loggingIn || splash || picking || forgot || reset || pin || setup) {
+      if (loggingIn || splash || pin || setup) {
         return '/home';
       }
       return null;
@@ -60,21 +72,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/standalone-setup',
         builder: (_, __) => const StandaloneSetupScreen(),
-      ),
-      GoRoute(
-        path: '/forgot-password',
-        builder: (_, __) => const ForgotPasswordScreen(),
-      ),
-      GoRoute(
-        path: '/reset-password',
-        builder: (context, state) {
-          final email = state.extra is String ? state.extra as String : '';
-          return ResetPasswordScreen(initialEmail: email);
-        },
-      ),
-      GoRoute(
-        path: '/workspaces',
-        builder: (_, __) => const WorkspacePickerScreen(),
       ),
       GoRoute(
         path: '/pos-blocked',

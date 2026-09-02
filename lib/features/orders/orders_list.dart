@@ -13,6 +13,7 @@ import '../../core/pos/pos_mode.dart';
 import '../../core/sync/pos_sync_coordinator.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 /// Running POS orders — mirrors web running orders with filters/search.
@@ -150,7 +151,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
       }
       return;
     }
-    final id = (order['id'] as num?)?.toInt();
+    final id = asInt(order['id']);
     if (id == null) return;
     try {
       await ref
@@ -171,7 +172,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
     final localId = '${order['local_id'] ?? ''}';
     String? resolved = localId.isNotEmpty ? localId : null;
     if (resolved == null) {
-      final serverId = (order['id'] as num?)?.toInt();
+      final serverId = asInt(order['id']);
       if (serverId == null) return;
       resolved =
           (await ref
@@ -275,7 +276,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
                   if (item['local_id'] != null || item['id'] != null)
                     ReturnLineInput(
                       orderItemLocalId: '${item['local_id'] ?? item['id']}',
-                      quantity: (item['quantity'] as num?)?.toInt() ?? 1,
+                      quantity: asIntOr(item['quantity'], 1),
                     ),
               ],
               allowNegativeStock: store?.allowNegativeStock ?? false,
@@ -329,7 +330,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
       if (_filter == 'cancelled' && status != 'cancelled') return false;
       if (q.isEmpty) return true;
       final hay =
-          '${order['order_number']}|${order['table']?['name']}|${order['customer']?['name']}|${order['pos_status']}'
+          '${order['order_number']}|${nestedName(order['table'], fallback: '')}|${nestedName(order['customer'], fallback: '')}|${order['pos_status']}'
               .toLowerCase();
       return hay.contains(q);
     }).toList();
@@ -455,9 +456,9 @@ class _OrdersListState extends ConsumerState<OrdersList> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              '${PosLabels.orderType(order['order_type'] as String?)}'
-                              ' · الطاولة: ${order['table']?['name'] ?? '—'}'
-                              ' · العميل: ${order['customer']?['name'] ?? '—'}',
+                              '${PosLabels.orderType(order['order_type']?.toString())}'
+                              ' · الطاولة: ${nestedName(order['table'])}'
+                              ' · العميل: ${nestedName(order['customer'])}',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: HasimColors.muted,
@@ -480,7 +481,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
                                     '${item['product_name']}'
                                     '${item['variant_name'] != null ? ' - ${item['variant_name']}' : ''}'
                                     ' × ${item['quantity']}'
-                                    ' = ${((item['total_amount'] as num?) ?? 0).toStringAsFixed(2)}',
+                                    ' = ${asDoubleOr(item['total_amount']).toStringAsFixed(2)}',
                                     style: const TextStyle(fontSize: 12),
                                   ),
                                 ),
@@ -541,7 +542,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
                                 ),
                                 const SizedBox(width: 12),
                                 Text(
-                                  ((order['total_amount'] as num?) ?? 0)
+                                  asDoubleOr(order['total_amount'])
                                       .toStringAsFixed(2),
                                   style: const TextStyle(
                                     fontSize: 16,

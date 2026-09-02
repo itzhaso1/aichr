@@ -1,3 +1,4 @@
+import '../util/json_numbers.dart';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
@@ -779,7 +780,7 @@ class SyncEngineV2 {
     Map<String, dynamic> data,
   ) async {
     final serverId = data['id'] is num
-        ? (data['id'] as num).toInt()
+        ? asIntOr(data['id'])
         : int.tryParse('${data['id']}');
     await _db.transaction(() async {
       await (_db.update(_db.localOrders)
@@ -842,7 +843,7 @@ class SyncEngineV2 {
   ) async {
     final payload = _decode(row.payloadJson);
     final serverId = data['id'] is num
-        ? (data['id'] as num).toInt()
+        ? asIntOr(data['id'])
         : int.tryParse('${data['id']}');
     await _db.transaction(() async {
       await (_db.update(_db.localCustomers)
@@ -939,7 +940,7 @@ class SyncEngineV2 {
           invoiceNumber: Value(data['invoice_number']?.toString()),
           totalAmount: Value(
             data['total_amount'] is num
-                ? Money.toCents(data['total_amount'] as num)
+                ? Money.toCents(data['total_amount'])
                 : (existing?.totalAmount ?? 0),
           ),
           syncStatus: const Value('synced'),
@@ -1070,7 +1071,7 @@ class SyncEngineV2 {
           ),
           totalAmount: Value(
             invoice?['total_amount'] is num
-                ? Money.toCents(invoice?['total_amount'] as num)
+                ? Money.toCents(invoice?['total_amount'])
                 : (existing?.totalAmount ?? 0),
           ),
           syncStatus: const Value('synced'),
@@ -1152,7 +1153,7 @@ class SyncEngineV2 {
           invoiceNumber: Value(data['invoice_number']?.toString()),
           totalAmount: Value(
             data['total_amount'] is num
-                ? Money.toCents(data['total_amount'] as num)
+                ? Money.toCents(data['total_amount'])
                 : (existing?.totalAmount ?? 0),
           ),
           syncStatus: const Value('synced'),

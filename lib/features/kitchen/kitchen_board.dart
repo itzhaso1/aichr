@@ -12,6 +12,7 @@ import '../../core/pos/pos_mode.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 /// Kitchen prep board — mirrors `workspace/pos/kitchen/index`.
@@ -212,7 +213,10 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        '${order['table']?['name'] ?? 'طاولة غير معروفة'}',
+                                        nestedName(
+                                          order['table'],
+                                          fallback: 'طاولة غير معروفة',
+                                        ),
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                           fontSize: 13,

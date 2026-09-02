@@ -91,7 +91,8 @@ class LocalFinanceRepository {
 
     final byMethod = <String, double>{};
     for (final p in dayPayments) {
-      byMethod[p.method] = (byMethod[p.method] ?? 0) + Money.fromCents(p.amount);
+      byMethod[p.method] =
+          (byMethod[p.method] ?? 0) + Money.fromCents(p.amount);
     }
     if (byMethod.isEmpty) {
       for (final inv in invoices) {
@@ -153,16 +154,18 @@ class LocalFinanceRepository {
         'takeaway_sales_total': takeawaySales,
       },
       'channel_stats': {
-        'table': {'sales_total': tableSales, 'orders_count': dayOrders.where((o) => o.orderType == 'table').length},
-        'takeaway': {
-          'sales_total': takeawaySales,
-          'orders_count':
-              dayOrders.where((o) => o.orderType != 'table').length,
-        },
+        'table': dayOrders.where((o) => o.orderType == 'table').length,
+        'takeaway': dayOrders.where((o) => o.orderType == 'takeaway').length,
+        'delivery': dayOrders.where((o) => o.orderType == 'delivery').length,
       },
       'payment_methods': [
         for (final e in byMethod.entries)
-          {'method': e.key, 'total': e.value, 'count': 1},
+          {
+            'method': e.key,
+            'total': e.value,
+            'orders_count': 1,
+            'count': 1,
+          },
       ],
       'invoices': invoices,
       'closed_orders': closedOrders,
@@ -179,27 +182,64 @@ class LocalFinanceRepository {
         for (final inv in invoices.take(20))
           {
             'label': 'فاتورة ${inv['invoice_number']}',
-            'total': inv['total_amount'],
+            'total': asDoubleOr(inv['total_amount']),
             'at': inv['closed_at'] ?? inv['created_at'],
           },
       ],
     };
   }
 
+  /// Never spread raw payloadJson — legacy rows may store money as strings and
+  /// that previously crashed UI with `String is not a subtype of num`.
   Map<String, dynamic> _invoiceToMap(LocalInvoice row) {
     final payload = _safeMap(row.payloadJson);
+    final items = <Map<String, dynamic>>[];
+    for (final raw in asMapList(payload['items'])) {
+      items.add({
+        'item_name':
+            '${raw['item_name'] ?? raw['product_name'] ?? raw['name'] ?? 'صنف'}',
+        'quantity': asIntOr(raw['quantity'], 1),
+        'unit_price': asDoubleOr(raw['unit_price']),
+        'tax_amount': asDoubleOr(raw['tax_amount']),
+        'total_amount': asDoubleOr(
+          raw['total_amount'] ?? raw['total'],
+        ),
+        'discount_amount': asDoubleOr(raw['discount_amount']),
+      });
+    }
+
+    final table = payload['table'];
+    final tableOut = table is Map
+        ? {
+            'id': table['id'],
+            'name': nestedName(table, fallback: ''),
+          }
+        : (table != null ? {'name': '$table'} : null);
+
     return {
-      ...payload,
       'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'server_id': row.serverId,
-      'invoice_number': row.invoiceNumber ?? payload['invoice_number'],
+      'invoice_number':
+          row.invoiceNumber ??
+          row.localInvoiceNumber ??
+          payload['invoice_number']?.toString() ??
+          row.localId,
+      'order_local_id': row.orderLocalId ?? payload['order_local_id'],
+      'subtotal': Money.fromCents(row.subtotal),
+      'discount_amount': Money.fromCents(row.discountAmount),
+      'tax_amount': Money.fromCents(row.taxAmount),
       'total_amount': Money.fromCents(row.totalAmount),
-      'sync_status': row.syncStatus,
-      'created_at': row.createdAt.toIso8601String(),
+      'payment_method': payload['payment_method']?.toString(),
       'closed_at':
-          payload['closed_at'] ?? row.createdAt.toIso8601String(),
+          payload['closed_at']?.toString() ?? row.createdAt.toIso8601String(),
+      'created_at': row.createdAt.toIso8601String(),
+      'items': items,
+      if (tableOut != null) 'table': tableOut,
+      'store_name': payload['store_name']?.toString(),
+      'sync_status': row.syncStatus,
       'is_local': row.serverId == null,
+      'status': row.status,
     };
   }
 

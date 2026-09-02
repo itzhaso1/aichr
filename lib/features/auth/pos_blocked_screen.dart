@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
-import '../../core/config/app_config.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
+/// Offline-only build never hits billing / Laravel — this screen is a dead end.
 class PosBlockedScreen extends ConsumerWidget {
   const PosBlockedScreen({super.key});
 
@@ -42,31 +40,23 @@ class PosBlockedScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'الكاشير غير متاح في باقتك الحالية',
+                  'الكاشير المحلي غير جاهز',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'قم بترقية الباقة لتفعيل ميزة الكاشير في مساحة العمل الحالية.',
+                  'أعد إعداد المتجر المحلي أو ادخل بـ PIN. التطبيق يعمل أوفلاين بدون خادم.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: HasimColors.muted),
                 ),
                 const SizedBox(height: 24),
                 HsPrimaryButton(
-                  label: 'عرض الباقات',
-                  onPressed: () async {
-                    final uri =
-                        Uri.parse('${AppConfig.apiBase}/workspace/billing');
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  },
-                ),
-                TextButton(
+                  label: 'العودة لتسجيل الدخول',
                   onPressed: () async {
                     await ref.read(authControllerProvider.notifier).logout();
                     if (context.mounted) context.go('/login');
                   },
-                  child: const Text('تسجيل الخروج / تغيير الحساب'),
                 ),
               ],
             ),
@@ -78,11 +68,6 @@ class PosBlockedScreen extends ConsumerWidget {
 }
 
 Future<bool> ensurePosEnabled(WidgetRef ref) async {
-  try {
-    final data = await ref.read(cashierApiProvider).get('/bootstrap');
-    return data['pos_enabled'] == true;
-  } on ApiException catch (e) {
-    if (e.statusCode == 403) return false;
-    rethrow;
-  }
+  // Offline-only: POS is always enabled for a local store session.
+  return true;
 }

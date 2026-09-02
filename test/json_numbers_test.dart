@@ -17,4 +17,27 @@ void main() {
     expect(asDouble('4.5'), 4.5);
     expect(asDoubleOr('x', 9), 9);
   });
+
+  test('nestedName tolerates Map String and null without crash', () {
+    expect(nestedName({'name': 'طاولة 1'}), 'طاولة 1');
+    expect(nestedName('طاولة نصية'), 'طاولة نصية');
+    expect(nestedName(null), '—');
+    expect(nestedName(['not-a-map']), '—');
+    expect(nestedField('string', 'name'), isNull);
+    expect(nestedField({'name': 'x'}, 'name'), 'x');
+  });
+
+  test('asStringKeyedMap and asMapList never throw on bad payloads', () {
+    expect(asStringKeyedMap(null), isEmpty);
+    expect(asStringKeyedMap('bad'), isEmpty);
+    expect(asMapList(null), isEmpty);
+    expect(asMapList('bad'), isEmpty);
+    expect(
+      asMapList([
+        {'a': 1},
+        'skip',
+      ]),
+      hasLength(1),
+    );
+  });
 }

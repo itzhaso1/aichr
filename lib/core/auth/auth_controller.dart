@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../api/cashier_api.dart';
+import '../config/app_config.dart';
 import '../offline/offline_store.dart';
 import '../pos/application/local_auth_service.dart';
 import '../pos/application/pos_providers.dart';
@@ -162,7 +163,7 @@ class AuthRepository {
 
   Future<void> logout() async {
     final token = await _storage.read(key: _tokenKey);
-    if (!PosMode.isStandaloneToken(token)) {
+    if (!AppConfig.offlineOnly && !PosMode.isStandaloneToken(token)) {
       try {
         await _api.post('/auth/logout');
       } catch (_) {
@@ -210,7 +211,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
         if (store != null) {
           _ref.read(currentStoreIdProvider.notifier).state = store.localId;
           _ref.read(posConnectedModeProvider.notifier).state =
-              store.connectedMode;
+              AppConfig.offlineOnly ? false : store.connectedMode;
           _ref.read(workspaceIdProvider.notifier).state = store.workspaceId;
         }
         // Cold start must require PIN. Token stays on disk for next restore.
@@ -355,6 +356,11 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   };
 
   Future<void> login(String emailOrPhone, String password) async {
+    if (AppConfig.offlineOnly) {
+      throw ApiException(
+        'التطبيق أوفلاين بالكامل — استخدم الدخول بـ PIN المحلي.',
+      );
+    }
     // Keep previous session visible during login attempt — avoid splash remount loop.
     try {
       final session = await _ref
@@ -374,6 +380,11 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
     required String provider,
     required String accessToken,
   }) async {
+    if (AppConfig.offlineOnly) {
+      throw ApiException(
+        'التطبيق أوفلاين بالكامل — استخدم الدخول بـ PIN المحلي.',
+      );
+    }
     try {
       final session = await _ref
           .read(authRepositoryProvider)
@@ -428,8 +439,9 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
     _ref.read(currentLocalUserIdProvider.notifier).state =
         user.localId as String;
     _ref.read(currentStoreIdProvider.notifier).state = store.localId as String;
+    // Offline-only: never enable Laravel connected mode.
     _ref.read(posConnectedModeProvider.notifier).state =
-        store.connectedMode == true;
+        AppConfig.offlineOnly ? false : store.connectedMode == true;
     final session = AuthSession(
       token: token,
       user: {
@@ -464,6 +476,9 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   }
 
   Future<String> forgotPassword(String email) {
+    if (AppConfig.offlineOnly) {
+      throw ApiException('إعادة تعيين كلمة المرور غير متاحة في الوضع الأوفلاين.');
+    }
     return _ref.read(authRepositoryProvider).forgotPassword(email);
   }
 
@@ -473,6 +488,9 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
     required String password,
     required String passwordConfirmation,
   }) {
+    if (AppConfig.offlineOnly) {
+      throw ApiException('إعادة تعيين كلمة المرور غير متاحة في الوضع الأوفلاين.');
+    }
     return _ref
         .read(authRepositoryProvider)
         .resetPassword(
@@ -484,6 +502,9 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   }
 
   Future<void> selectWorkspace(Map<String, dynamic> workspace) async {
+    if (AppConfig.offlineOnly) {
+      throw ApiException('اختيار مساحة العمل السحابية غير متاح أوفلاين.');
+    }
     final rawId = workspace['id'];
     final id = rawId is int ? rawId : int.tryParse('$rawId');
     if (id == null) return;
@@ -586,6 +607,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
       permissions: nextPerms,
       posEnabled: nextPos,
       entitlements: nextEntitlements,
+      isLocalMode: current.isLocalMode || AppConfig.offlineOnly,
     );
     OfflineStore.instance.cacheSession(_sessionToCache(next));
     state = AsyncValue.data(next);

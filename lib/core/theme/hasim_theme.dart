@@ -22,6 +22,11 @@ abstract final class HasimTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor: HasimColors.page,
       textTheme: text,
+      splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       appBarTheme: AppBarTheme(
         backgroundColor: HasimColors.surface.withValues(alpha: 0.95),
         foregroundColor: HasimColors.ink,

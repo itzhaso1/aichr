@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../util/json_numbers.dart';
+
 /// Connection transports supported by the cashier print architecture.
 enum PrinterTransport { bluetooth, usb, network, system }
 
@@ -41,7 +43,7 @@ class PrinterProfile {
       orElse: () => PrinterTransport.network,
     ),
     address: json['address'] as String?,
-    paperChars: (json['paper_chars'] as num?)?.toInt() ?? 32,
+    paperChars: asIntOr(json['paper_chars'], 32),
   );
 }
 
@@ -82,16 +84,15 @@ class EscPosReceiptBuilder {
       for (final raw in items.whereType<Map>()) {
         final name = '${raw['item_name'] ?? raw['product_name'] ?? 'صنف'}';
         final qty = raw['quantity'] ?? 1;
-        final total = ((raw['total_amount'] as num?) ?? 0).toStringAsFixed(2);
+        final total = asDoubleOr(raw['total_amount']).toStringAsFixed(2);
         out.add(_line('$name x$qty'));
         out.add(_line(_pad('', total)));
       }
     }
     out.add(_line('-' * charsPerLine));
-    final subtotal = ((invoice['subtotal'] as num?) ?? 0).toStringAsFixed(2);
-    final discount = ((invoice['discount_amount'] as num?) ?? 0)
-        .toStringAsFixed(2);
-    final total = ((invoice['total_amount'] as num?) ?? 0).toStringAsFixed(2);
+    final subtotal = asDoubleOr(invoice['subtotal']).toStringAsFixed(2);
+    final discount = asDoubleOr(invoice['discount_amount']).toStringAsFixed(2);
+    final total = asDoubleOr(invoice['total_amount']).toStringAsFixed(2);
     out.add(_line(_pad('المجموع الفرعي', subtotal)));
     out.add(_line(_pad('الخصم', discount)));
     if (invoice['tax_amount'] != null) {
@@ -99,7 +100,7 @@ class EscPosReceiptBuilder {
         _line(
           _pad(
             'الضريبة',
-            ((invoice['tax_amount'] as num?) ?? 0).toStringAsFixed(2),
+            asDoubleOr(invoice['tax_amount']).toStringAsFixed(2),
           ),
         ),
       );

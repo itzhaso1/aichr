@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../api/cashier_api.dart';
+import '../config/app_config.dart';
 import '../pos/domain/pricing_service.dart';
 import 'app_database.dart';
 import 'local_ids.dart';
@@ -11,6 +12,7 @@ import 'workspace_scope.dart';
 
 /// Downloads workspace POS baseline into SQLite using existing Cashier APIs.
 /// Does not invent catalog data. After success, offline POS reads become possible.
+/// When [AppConfig.offlineOnly] is true, never contacts the network.
 class InitialSyncService {
   InitialSyncService(this._db, this._api, {this.deviceId});
 
@@ -36,12 +38,25 @@ class InitialSyncService {
         tableCount: await _db.tableCount(workspaceId),
       );
     }
+    if (AppConfig.offlineOnly) {
+      return InitialSyncResult(
+        ready: true,
+        message: 'وضع أوفلاين — بدون مزامنة من الخادم',
+        fromCache: true,
+        productCount: await _db.productCount(workspaceId),
+        categoryCount: await _db.categoryCount(workspaceId),
+        tableCount: await _db.tableCount(workspaceId),
+      );
+    }
     return run(workspaceId);
   }
 
   Future<InitialSyncResult> run(int workspaceId) async {
     if (workspaceId <= 0) {
       throw ArgumentError('workspaceId required');
+    }
+    if (AppConfig.offlineOnly) {
+      return ensureReady(workspaceId);
     }
 
     final bootstrap = await _api.get('/bootstrap');
