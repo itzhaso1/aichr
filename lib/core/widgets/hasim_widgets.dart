@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../network/link_policy.dart';
@@ -381,36 +380,17 @@ class ProductCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (showImage)
-                        Expanded(
+                        const Expanded(
                           child: ColoredBox(
                             color: HasimColors.surfaceSoft,
-                            child: imageUrl == null || imageUrl!.isEmpty
-                                ? const Icon(
-                                    Icons.restaurant_menu,
-                                    color: Color(0xFFCBD5E1),
-                                    size: 36,
-                                  )
-                                : CachedNetworkImage(
-                                    imageUrl: imageUrl!,
-                                    fit: BoxFit.cover,
-                                    width: w,
-                                    fadeInDuration: Duration.zero,
-                                    fadeOutDuration: Duration.zero,
-                                    memCacheWidth: (w * 2)
-                                        .round()
-                                        .clamp(64, 512)
-                                        .toInt(),
-                                    placeholder: (_, _) => const ColoredBox(
-                                      color: HasimColors.surfaceSoft,
-                                    ),
-                                    errorWidget: (_, _, _) => const ColoredBox(
-                                      color: HasimColors.surfaceSoft,
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Color(0xFFCBD5E1),
-                                      ),
-                                    ),
-                                  ),
+                            // Offline build: never load network images under a
+                            // hovering mouse — CachedNetworkImage rebuilds
+                            // trip mouse_tracker / no-size asserts.
+                            child: Icon(
+                              Icons.restaurant_menu,
+                              color: Color(0xFFCBD5E1),
+                              size: 36,
+                            ),
                           ),
                         ),
                       Padding(

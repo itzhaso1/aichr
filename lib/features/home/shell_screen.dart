@@ -175,11 +175,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final isDesktop = width >= 1100;
     final isTablet = width >= 800 && width < 1100;
-    // Do NOT watch the full cart here — every line change would rebuild the
-    // product grid under a hovering mouse and trip mouse_tracker/no-size asserts.
-    final session = ref.watch(authControllerProvider).valueOrNull;
-    final workspaceName =
-        (session?.workspace?['name'] as String?) ?? 'المتجر المحلي';
+    // Do NOT watch the full cart / auth session object here — every change
+    // would rebuild the product grid under a hovering mouse and trip
+    // mouse_tracker / no-size asserts.
+    final workspaceName = ref.watch(
+      authControllerProvider.select(
+        (auth) =>
+            (auth.valueOrNull?.workspace?['name'] as String?) ?? 'المتجر المحلي',
+      ),
+    );
 
     return Scaffold(
       body: Column(
@@ -204,7 +208,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
                 search: _search,
                 selectedCategoryId: _selectedCategoryId,
                 onCategory: (id) => setState(() => _selectedCategoryId = id),
-                onSearchChanged: () => setState(() {}),
                 onCheckout: _checkout,
                 onOpenMobileCart: () => _openCartSheet(context),
               ),
@@ -666,7 +669,6 @@ class _CashierHome extends ConsumerWidget {
     required this.search,
     required this.selectedCategoryId,
     required this.onCategory,
-    required this.onSearchChanged,
     required this.onCheckout,
     required this.onOpenMobileCart,
   });
@@ -676,7 +678,6 @@ class _CashierHome extends ConsumerWidget {
   final TextEditingController search;
   final String? selectedCategoryId;
   final ValueChanged<String?> onCategory;
-  final VoidCallback onSearchChanged;
   final Future<void> Function() onCheckout;
   final VoidCallback onOpenMobileCart;
 
@@ -750,7 +751,6 @@ class _CashierHome extends ConsumerWidget {
                     search: search,
                     selectedCategoryId: selectedCategoryId,
                     onCategory: onCategory,
-                    onSearchChanged: onSearchChanged,
                     showMobileCategories: !isDesktop,
                   ),
                 ),
@@ -833,7 +833,6 @@ class _CashierHome extends ConsumerWidget {
                   search: search,
                   selectedCategoryId: selectedCategoryId,
                   onCategory: onCategory,
-                  onSearchChanged: onSearchChanged,
                   showMobileCategories: false,
                 ),
               ),
@@ -874,23 +873,51 @@ class _CashierHome extends ConsumerWidget {
   }
 }
 
-class _ProductsPanel extends ConsumerWidget {
+class _ProductsPanel extends ConsumerStatefulWidget {
   const _ProductsPanel({
     required this.search,
     required this.selectedCategoryId,
     required this.onCategory,
-    required this.onSearchChanged,
     required this.showMobileCategories,
   });
 
   final TextEditingController search;
   final String? selectedCategoryId;
   final ValueChanged<String?> onCategory;
-  final VoidCallback onSearchChanged;
   final bool showMobileCategories;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ProductsPanel> createState() => _ProductsPanelState();
+}
+
+class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
+  @override
+  void initState() {
+    super.initState();
+    widget.search.addListener(_onSearch);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProductsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.search != widget.search) {
+      oldWidget.search.removeListener(_onSearch);
+      widget.search.addListener(_onSearch);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.search.removeListener(_onSearch);
+    super.dispose();
+  }
+
+  void _onSearch() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final items = ref.watch(catalogItemsProvider);
     final width = MediaQuery.sizeOf(context).width;
     final crossAxis = width >= 1500
@@ -900,6 +927,9 @@ class _ProductsPanel extends ConsumerWidget {
         : width >= 900
         ? 3
         : 2;
+    final search = widget.search;
+    final selectedCategoryId = widget.selectedCategoryId;
+    final onCategory = widget.onCategory;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -916,7 +946,6 @@ class _ProductsPanel extends ConsumerWidget {
               width: width >= 500 ? 260 : 160,
               child: TextField(
                 controller: search,
-                onChanged: (_) => onSearchChanged(),
                 onSubmitted: (raw) async {
                   final workspaceId = ref.read(workspaceIdProvider);
                   if (workspaceId == null || raw.trim().isEmpty) return;
@@ -924,12 +953,10 @@ class _ProductsPanel extends ConsumerWidget {
                       .read(barcodeInputProvider)
                       .lookup(workspaceId: workspaceId, raw: raw.trim());
                   if (hit == null) {
-                    onSearchChanged();
+                    if (mounted) setState(() {});
                     return;
                   }
-                  ref
-                      .read(cartControllerProvider.notifier)
-                      .addItem(
+                  ref.read(cartControllerProvider.notifier).addItem(
                         productLocalId: '${hit['local_id']}',
                         menuItemId: asInt(hit['id']),
                         name: '${hit['name']}',
@@ -940,7 +967,7 @@ class _ProductsPanel extends ConsumerWidget {
                         barcode: hit['barcode'] as String?,
                       );
                   search.clear();
-                  onSearchChanged();
+                  if (mounted) setState(() {});
                 },
                 decoration: const InputDecoration(
                   hintText: 'ابحث بالاسم أو الباركود أو SKU...',
@@ -981,7 +1008,7 @@ class _ProductsPanel extends ConsumerWidget {
                   onAction: () {
                     onCategory(null);
                     search.clear();
-                    onSearchChanged();
+                    setState(() {});
                   },
                 );
               }
@@ -1011,7 +1038,6 @@ class _ProductsPanel extends ConsumerWidget {
         final cellW = constraints.maxWidth.isFinite && constraints.maxWidth > 0
             ? (constraints.maxWidth - (10 * (crossAxis - 1))) / crossAxis
             : 140.0;
-        // Keep cells tall enough for text + add chip; avoid zero-flex overflow.
         final ratio = cellW >= 180 ? 0.72 : 0.78;
         return GridView.builder(
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -1029,6 +1055,10 @@ class _ProductsPanel extends ConsumerWidget {
             final available = item['is_active'] != false &&
                 item['availability'] != 'unavailable';
             return ProductCard(
+              key: ValueKey(
+                (item['local_id'] as String?) ??
+                    (item['id']?.toString() ?? '$index-$name'),
+              ),
               name: name,
               priceLabel: price.toStringAsFixed(2),
               currency: '${item['currency'] ?? 'SAR'}',
@@ -1105,21 +1135,13 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) return;
     try {
-      // Local SQLite first — no network wait on cart open.
+      // Local SQLite only — never hit the network from the cart panel.
       final local = await ref
           .read(tablesRepositoryProvider)
           .listTables(workspaceId);
       if (!mounted) return;
       if (local.isNotEmpty) {
         setState(() => _tables = local);
-      }
-      // Best-effort remote refresh in background.
-      final board = await ref
-          .read(tablesRepositoryProvider)
-          .loadBoard(workspaceId);
-      if (!mounted) return;
-      if (board.isNotEmpty) {
-        setState(() => _tables = board);
       }
     } catch (_) {
       // Offline — takeaway still works without tables list.
@@ -1445,9 +1467,7 @@ class _TablePickerField extends StatelessWidget {
                 )
               else
                 for (final t in tables)
-                  ListTile(
-                    title: Text('${t['name']}'),
-                    selected: asInt(t['id'] ?? t['server_id']) == selectedId,
+                  PosTap(
                     onTap: () {
                       final id = asInt(t['id'] ?? t['server_id']);
                       if (id == null) return;
@@ -1459,6 +1479,20 @@ class _TablePickerField extends StatelessWidget {
                         ),
                       );
                     },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      color: asInt(t['id'] ?? t['server_id']) == selectedId
+                          ? HasimColors.brandSoft
+                          : null,
+                      child: Text(
+                        '${t['name']}',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
                   ),
             ],
           ),

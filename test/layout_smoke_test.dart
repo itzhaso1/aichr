@@ -252,6 +252,68 @@ void main() {
     expect(taps, 5);
     expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
+
+  testWidgets('rebuild under hovering mouse does not trip mouse_tracker',
+      (tester) async {
+    var version = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: [
+                  TextButton(
+                    onPressed: () => setState(() => version++),
+                    child: Text('rebuild-$version'),
+                  ),
+                  Expanded(
+                    child: GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        childAspectRatio: 0.75,
+                      ),
+                      itemCount: 6,
+                      itemBuilder: (_, i) => ProductCard(
+                        key: ValueKey('v$version-$i'),
+                        name: 'صنف $i v$version',
+                        priceLabel: '5.00',
+                        currency: 'SAR',
+                        onAdd: () => setState(() => version++),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    addTearDown(gesture.removePointer);
+    await tester.pump();
+
+    await gesture.moveTo(tester.getCenter(find.byType(ProductCard).first));
+    await tester.pump();
+
+    for (var i = 0; i < 5; i++) {
+      await tester.tap(find.textContaining('rebuild-'));
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(find.byType(ProductCard).first));
+      await tester.pump();
+    }
+
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
+  });
 }
 
 void _noop() {}
