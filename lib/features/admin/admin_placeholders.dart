@@ -73,6 +73,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           _loading = false;
         });
         ref.invalidate(catalogItemsProvider);
+        ref.invalidate(categoriesProvider);
         return;
       }
       final api = ref.read(cashierApiProvider);
@@ -104,6 +105,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
         _loading = false;
       });
       ref.invalidate(catalogItemsProvider);
+      ref.invalidate(categoriesProvider);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -161,6 +163,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             cost: asDouble(result['cost']),
             stock: asInt(result['stock']),
             permissions: session?.permissions ?? _perms,
+            categoryLocalId: result['category_local_id'] as String?,
           );
         }
         if (!mounted) return;
@@ -580,8 +583,27 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
   late final TextEditingController _desc;
   late final TextEditingController _price;
   late final TextEditingController _currency;
-  int? _categoryId;
+  String? _categoryLocalId;
   var _active = true;
+
+  String? _existingCategoryKey(Map<String, dynamic>? e) {
+    if (e == null) return null;
+    final local = '${e['category_local_id'] ?? ''}'.trim();
+    if (local.isNotEmpty) return local;
+    final sid = '${e['pos_item_category_id'] ?? ''}'.trim();
+    for (final c in widget.categories) {
+      final key = entityKey(c);
+      if (key.isEmpty) continue;
+      if (key == sid || '${c['id']}' == sid || '${c['local_id']}' == sid) {
+        return key;
+      }
+    }
+    if (e['category'] is Map) {
+      final fromNested = entityKey(e['category'] as Map);
+      if (fromNested.isNotEmpty) return fromNested;
+    }
+    return sid.isEmpty ? null : sid;
+  }
 
   @override
   void initState() {
@@ -597,9 +619,7 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
       text: asDoubleOr(e?['price']).toStringAsFixed(2),
     );
     _currency = TextEditingController(text: '${e?['currency'] ?? 'SAR'}');
-    _categoryId =
-        asInt(e?['pos_item_category_id']) ??
-        (e?['category'] is Map ? asInt((e!['category'] as Map)['id']) : null);
+    _categoryLocalId = _existingCategoryKey(e);
     _active = e?['is_active'] != false;
   }
 
@@ -641,22 +661,22 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
                 controller: _currency,
                 decoration: const InputDecoration(labelText: 'العملة'),
               ),
-              DropdownButtonFormField<int?>(
-                value: _categoryId,
+              DropdownButtonFormField<String?>(
+                value: _categoryLocalId,
                 decoration: const InputDecoration(labelText: 'التصنيف'),
                 items: [
-                  const DropdownMenuItem<int?>(
+                  const DropdownMenuItem<String?>(
                     value: null,
                     child: Text('— بدون —'),
                   ),
                   for (final c in widget.categories)
-                    if (asInt(c['id']) != null)
-                      DropdownMenuItem<int?>(
-                        value: asInt(c['id']),
+                    if (c['is_active'] != false && entityKey(c).isNotEmpty)
+                      DropdownMenuItem<String?>(
+                        value: entityKey(c),
                         child: Text('${c['name']}'),
                       ),
                 ],
-                onChanged: (v) => setState(() => _categoryId = v),
+                onChanged: (v) => setState(() => _categoryLocalId = v),
               ),
               TextField(
                 controller: _sku,
@@ -709,7 +729,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
               'item_type': _type.text.trim().isEmpty
                   ? 'عام'
                   : _type.text.trim(),
-              'pos_item_category_id': _categoryId,
+              'pos_item_category_id': _categoryLocalId,
+              'category_local_id': _categoryLocalId,
               'size_label': _size.text.trim().isEmpty
                   ? null
                   : _size.text.trim(),

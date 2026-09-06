@@ -375,6 +375,65 @@ void main() {
 
     expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
+
+  testWidgets('switching off a hovered product grid does not storm mouse_tracker',
+      (tester) async {
+    var tab = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: [
+                  TextButton(
+                    onPressed: () => setState(() => tab = 1),
+                    child: const Text('التقارير'),
+                  ),
+                  Expanded(
+                    child: IndexedStack(
+                      index: tab,
+                      children: [
+                        GridView.builder(
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            childAspectRatio: 0.7,
+                          ),
+                          itemCount: 9,
+                          itemBuilder: (_, i) => ProductCard(
+                            name: 'صنف $i',
+                            priceLabel: '5.00',
+                            currency: 'SAR',
+                            onAdd: () {},
+                          ),
+                        ),
+                        const Center(child: Text('تقرير يومي')),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(
+      location: tester.getCenter(find.byType(ProductCard).first),
+    );
+    addTearDown(gesture.removePointer);
+    await tester.pump();
+
+    await tester.tap(find.text('التقارير'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('تقرير يومي'), findsOneWidget);
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
+  });
 }
 
 void _noop() {}

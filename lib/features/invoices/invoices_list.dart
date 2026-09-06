@@ -13,7 +13,9 @@ import '../../core/widgets/pos_tap.dart';
 
 /// Closed cashier invoices — local SQLite first, remote enrichment optional.
 class InvoicesList extends ConsumerStatefulWidget {
-  const InvoicesList({super.key});
+  const InvoicesList({super.key, this.active = true});
+
+  final bool active;
 
   @override
   ConsumerState<InvoicesList> createState() => _InvoicesListState();
@@ -34,6 +36,14 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant InvoicesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _load();
+    }
   }
 
   String get _dateQuery => DateFormat('yyyy-MM-dd').format(_date);

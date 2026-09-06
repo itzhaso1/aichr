@@ -13,7 +13,9 @@ import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 class DailyReportsPanel extends ConsumerStatefulWidget {
-  const DailyReportsPanel({super.key});
+  const DailyReportsPanel({super.key, this.active = true});
+
+  final bool active;
 
   @override
   ConsumerState<DailyReportsPanel> createState() => _DailyReportsPanelState();
@@ -35,6 +37,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant DailyReportsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _load();
+    }
   }
 
   String get _q => DateFormat('yyyy-MM-dd').format(_date);

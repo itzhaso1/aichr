@@ -33,7 +33,7 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
   final _lines = <_DraftLine>[];
   final _notes = TextEditingController();
   final _search = TextEditingController();
-  int? _categoryId;
+  String? _categoryKey;
   var _loading = true;
   var _saving = false;
   String? _error;
@@ -140,8 +140,8 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
     final q = _search.text.trim().toLowerCase();
     return _catalog.where((item) {
       if (item['is_active'] == false) return false;
-      if (_categoryId != null &&
-          asInt(item['pos_item_category_id']) != _categoryId) {
+      if (_categoryKey != null &&
+          !productBelongsToCategory(item, _categoryKey)) {
         return false;
       }
       if (q.isEmpty) return true;
@@ -321,10 +321,10 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
                   children: [
                     _chip('الكل', null),
                     for (final c in _categories)
-                      if (c['is_active'] != false && asInt(c['id']) != null)
+                      if (c['is_active'] != false && entityKey(c).isNotEmpty)
                         _chip(
                           '${c['name']}',
-                          asInt(c['id']),
+                          entityKey(c),
                         ),
                   ],
                 ),
@@ -515,14 +515,14 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
     );
   }
 
-  Widget _chip(String label, int? id) {
-    final selected = _categoryId == id;
+  Widget _chip(String label, String? id) {
+    final selected = _categoryKey == id;
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 6),
       child: ChoiceChip(
         label: Text(label),
         selected: selected,
-        onSelected: (_) => setState(() => _categoryId = id),
+        onSelected: (_) => setState(() => _categoryKey = id),
         selectedColor: HasimColors.brand.withValues(alpha: 0.2),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(HasimRadius.sm),

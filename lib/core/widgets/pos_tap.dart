@@ -61,9 +61,34 @@ class _HitTestSizedGate extends SingleChildRenderObjectWidget {
 }
 
 class _RenderHitTestSizedGate extends RenderProxyBox {
+  bool get _canHitTest {
+    if (!hasSize || size.isEmpty) return false;
+    final childBox = child;
+    if (childBox is RenderBox &&
+        (!childBox.hasSize || childBox.size.isEmpty)) {
+      return false;
+    }
+    return true;
+  }
+
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
-    if (!hasSize || size.isEmpty) return false;
-    return super.hitTest(result, position: position);
+    if (!_canHitTest) return false;
+    try {
+      return super.hitTest(result, position: position);
+    } catch (_) {
+      // Never let a mid-layout mouse-tracker pass freeze the cashier UI.
+      return false;
+    }
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    if (!_canHitTest) return false;
+    try {
+      return super.hitTestChildren(result, position: position);
+    } catch (_) {
+      return false;
+    }
   }
 }

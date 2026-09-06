@@ -42,7 +42,7 @@ class LocalReportsService {
         .single
         .data;
 
-    final invoicesCount = _asInt(invAgg['c']);
+    var invoicesCount = _asInt(invAgg['c']);
     var subtotalCents = _asInt(invAgg['subtotal']);
     var discountCents = _asInt(invAgg['discount']);
     var taxCents = _asInt(invAgg['tax']);
@@ -159,7 +159,54 @@ class LocalReportsService {
       variables: vars,
     ).get();
 
+    // SQL datetime binds can miss local-day rows; fall back to Dart calendar day.
+    final dartInvoices = await (_db.select(_db.localInvoices)
+          ..where((t) => t.workspaceId.equals(workspaceId))
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+    final dayInvoices = [
+      for (final row in dartInvoices)
+        if (_sameCalendarDay(row.createdAt, date)) row,
+    ];
+    if (invoicesCount == 0 && dayInvoices.isNotEmpty) {
+      invoicesCount = dayInvoices.length;
+      subtotalCents = dayInvoices.fold<int>(0, (s, r) => s + r.subtotal);
+      discountCents = dayInvoices.fold<int>(0, (s, r) => s + r.discountAmount);
+      taxCents = dayInvoices.fold<int>(0, (s, r) => s + r.taxAmount);
+      grossCents = dayInvoices.fold<int>(0, (s, r) => s + r.totalAmount);
+    }
+
     final netCents = grossCents - returnCents;
+
+    final invoiceMaps = invoiceRows.isNotEmpty
+        ? [
+            for (final row in invoiceRows)
+              {
+                'id': row.data['local_id'],
+                'local_id': row.data['local_id'],
+                'invoice_number':
+                    row.data['local_invoice_number'] ??
+                    row.data['invoice_number'],
+                'total_amount': Money.fromCents(_asInt(row.data['total_amount'])),
+                'tax_amount': Money.fromCents(_asInt(row.data['tax_amount'])),
+                'discount_amount':
+                    Money.fromCents(_asInt(row.data['discount_amount'])),
+                'created_at': _invoiceCreatedAt(row.data['created_at']),
+              },
+          ]
+        : [
+            for (final row in dayInvoices.take(recentInvoiceLimit))
+              {
+                'id': row.localId,
+                'local_id': row.localId,
+                'invoice_number':
+                    row.localInvoiceNumber ?? row.invoiceNumber ?? row.localId,
+                'total_amount': Money.fromCents(row.totalAmount),
+                'tax_amount': Money.fromCents(row.taxAmount),
+                'discount_amount': Money.fromCents(row.discountAmount),
+                'created_at': row.createdAt.toIso8601String(),
+              },
+          ];
 
     return {
       'date':
@@ -196,20 +243,7 @@ class LocalReportsService {
             'sales': Money.fromCents(_asInt(row.data['rev'])),
           },
       ],
-      'invoices': [
-        for (final row in invoiceRows)
-          {
-            'id': row.data['local_id'],
-            'local_id': row.data['local_id'],
-            'invoice_number':
-                row.data['local_invoice_number'] ?? row.data['invoice_number'],
-            'total_amount': Money.fromCents(_asInt(row.data['total_amount'])),
-            'tax_amount': Money.fromCents(_asInt(row.data['tax_amount'])),
-            'discount_amount':
-                Money.fromCents(_asInt(row.data['discount_amount'])),
-            'created_at': _invoiceCreatedAt(row.data['created_at']),
-          },
-      ],
+      'invoices': invoiceMaps,
     };
   }
 
@@ -220,6 +254,12 @@ class LocalReportsService {
       return DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toIso8601String();
     }
     return raw?.toString() ?? '';
+  }
+
+  bool _sameCalendarDay(DateTime a, DateTime b) {
+    final la = a.toLocal();
+    final lb = b.toLocal();
+    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
   }
 
   Future<Map<String, dynamic>> stockSnapshot(int workspaceId) async {

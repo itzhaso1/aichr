@@ -56,7 +56,6 @@ class ShellScreen extends ConsumerStatefulWidget {
 
 class _ShellScreenState extends ConsumerState<ShellScreen> {
   _PosSection _section = _PosSection.cashier;
-  String? _selectedCategoryId;
   final _search = TextEditingController();
   var _bootstrapInFlight = false;
   var _checkoutInFlight = false;
@@ -119,6 +118,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     _bootstrapInFlight = false;
   }
 
+  void _selectSection(_PosSection next) {
+    if (next == _section) return;
+    // Defer so we never swap the product grid away mid mouse-tracker update.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _section == next) return;
+      setState(() => _section = next);
+    });
+  }
+
   void _applyBootstrapPayload(
     Map<String, dynamic> data, {
     required bool fromCache,
@@ -152,20 +160,18 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   Widget build(BuildContext context) {
     ref.listen<PosShellTab?>(posShellNavProvider, (prev, next) {
       if (next == null) return;
-      setState(() {
-        _section = switch (next) {
-          PosShellTab.cashier => _PosSection.cashier,
-          PosShellTab.tables => _PosSection.tables,
-          PosShellTab.orders => _PosSection.orders,
-          PosShellTab.menu => _PosSection.menu,
-          PosShellTab.kitchen => _PosSection.kitchen,
-          PosShellTab.invoices => _PosSection.invoices,
-          PosShellTab.customers => _PosSection.customers,
-          PosShellTab.items => _PosSection.items,
-          PosShellTab.reports => _PosSection.reports,
-          PosShellTab.sync => _PosSection.settings, // sync removed — offline only
-          PosShellTab.settings => _PosSection.settings,
-        };
+      _selectSection(switch (next) {
+        PosShellTab.cashier => _PosSection.cashier,
+        PosShellTab.tables => _PosSection.tables,
+        PosShellTab.orders => _PosSection.orders,
+        PosShellTab.menu => _PosSection.menu,
+        PosShellTab.kitchen => _PosSection.kitchen,
+        PosShellTab.invoices => _PosSection.invoices,
+        PosShellTab.customers => _PosSection.customers,
+        PosShellTab.items => _PosSection.items,
+        PosShellTab.reports => _PosSection.reports,
+        PosShellTab.sync => _PosSection.settings,
+        PosShellTab.settings => _PosSection.settings,
       });
       Future.microtask(
         () => ref.read(posShellNavProvider.notifier).state = null,
@@ -198,29 +204,30 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ),
           _TopNav(
             section: _section,
-            onSelect: (s) => setState(() => _section = s),
+            onSelect: _selectSection,
           ),
           Expanded(
-            child: switch (_section) {
-              _PosSection.cashier => _CashierHome(
-                isDesktop: isDesktop,
-                isTablet: isTablet,
-                search: _search,
-                selectedCategoryId: _selectedCategoryId,
-                onCategory: (id) => setState(() => _selectedCategoryId = id),
-                onCheckout: _checkout,
-                onOpenMobileCart: () => _openCartSheet(context),
-              ),
-              _PosSection.tables => const TablesBoard(),
-              _PosSection.orders => const OrdersList(),
-              _PosSection.menu => const MenuOrdersFeed(),
-              _PosSection.kitchen => const KitchenBoard(),
-              _PosSection.invoices => const InvoicesList(),
-              _PosSection.customers => const CustomersPanel(),
-              _PosSection.items => const ItemsAdminPanel(),
-              _PosSection.reports => const DailyReportsPanel(),
-              _PosSection.settings => const SettingsPanel(),
-            },
+            child: IndexedStack(
+              index: _section.index,
+              sizing: StackFit.expand,
+              children: [
+                _CashierHome(
+                  isDesktop: isDesktop,
+                  isTablet: isTablet,
+                  search: _search,
+                  onCheckout: _checkout,
+                ),
+                const TablesBoard(),
+                const OrdersList(),
+                const MenuOrdersFeed(),
+                const KitchenBoard(),
+                InvoicesList(active: _section == _PosSection.invoices),
+                const CustomersPanel(),
+                const ItemsAdminPanel(),
+                DailyReportsPanel(active: _section == _PosSection.reports),
+                const SettingsPanel(),
+              ],
+            ),
           ),
         ],
       ),
@@ -662,27 +669,38 @@ class _TopNav extends ConsumerWidget {
   }
 }
 
-class _CashierHome extends ConsumerWidget {
+class _CashierHome extends ConsumerStatefulWidget {
   const _CashierHome({
     required this.isDesktop,
     required this.isTablet,
     required this.search,
-    required this.selectedCategoryId,
-    required this.onCategory,
     required this.onCheckout,
-    required this.onOpenMobileCart,
   });
 
   final bool isDesktop;
   final bool isTablet;
   final TextEditingController search;
-  final String? selectedCategoryId;
-  final ValueChanged<String?> onCategory;
   final Future<void> Function() onCheckout;
-  final VoidCallback onOpenMobileCart;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CashierHome> createState() => _CashierHomeState();
+}
+
+class _CashierHomeState extends ConsumerState<_CashierHome> {
+  String? _categoryId;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDesktop = widget.isDesktop;
+    final isTablet = widget.isTablet;
+    final search = widget.search;
+    final selectedCategoryId = _categoryId;
+    void onCategory(String? id) {
+      if (_categoryId == id) return;
+      setState(() => _categoryId = id);
+    }
+
+    final onCheckout = widget.onCheckout;
     final categories = ref.watch(categoriesProvider);
     final items = ref.watch(catalogItemsProvider);
 
@@ -722,16 +740,14 @@ class _CashierHome extends ConsumerWidget {
                             label: (cat['name'] as String?) ?? '',
                             count: (items.valueOrNull ?? [])
                                 .where(
-                                  (i) =>
-                                      '${i['category_local_id'] ?? i['pos_item_category_id']}' ==
-                                      '${cat['local_id'] ?? cat['id']}',
+                                  (i) => productBelongsToCategory(
+                                    i,
+                                    entityKey(cat),
+                                  ),
                                 )
                                 .length,
-                            selected:
-                                selectedCategoryId ==
-                                '${cat['local_id'] ?? cat['id']}',
-                            onTap: () =>
-                                onCategory('${cat['local_id'] ?? cat['id']}'),
+                            selected: selectedCategoryId == entityKey(cat),
+                            onTap: () => onCategory(entityKey(cat)),
                           ),
                       ],
                     ),
@@ -785,8 +801,8 @@ class _CashierHome extends ConsumerWidget {
                   for (final cat in list)
                     _chip(
                       (cat['name'] as String?) ?? '',
-                      selectedCategoryId == '${cat['local_id'] ?? cat['id']}',
-                      () => onCategory('${cat['local_id'] ?? cat['id']}'),
+                      selectedCategoryId == entityKey(cat),
+                      () => onCategory(entityKey(cat)),
                     ),
                 ],
               ),
@@ -817,8 +833,8 @@ class _CashierHome extends ConsumerWidget {
                     for (final cat in offline)
                       _chip(
                         (cat['name'] as String?) ?? '',
-                        selectedCategoryId == '${cat['local_id'] ?? cat['id']}',
-                        () => onCategory('${cat['local_id'] ?? cat['id']}'),
+                        selectedCategoryId == entityKey(cat),
+                        () => onCategory(entityKey(cat)),
                       ),
                   ],
                 ),
@@ -984,9 +1000,7 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
             data: (list) {
               final q = search.text.trim().toLowerCase();
               final filtered = list.where((item) {
-                if (selectedCategoryId != null &&
-                    '${item['category_local_id'] ?? item['pos_item_category_id']}' !=
-                        selectedCategoryId) {
+                if (!productBelongsToCategory(item, selectedCategoryId)) {
                   return false;
                 }
                 if (q.isEmpty) return true;

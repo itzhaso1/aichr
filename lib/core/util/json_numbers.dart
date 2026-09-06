@@ -52,6 +52,28 @@ dynamic nestedField(dynamic value, String key) {
   return null;
 }
 
+/// Stable local-first catalog key (UUID local_id, else numeric/server id).
+String entityKey(dynamic row) {
+  if (row is Map) {
+    final local = '${row['local_id'] ?? ''}'.trim();
+    if (local.isNotEmpty) return local;
+    return '${row['id'] ?? ''}'.trim();
+  }
+  return '$row'.trim();
+}
+
+/// Match a product to a selected category chip without requiring numeric ids.
+bool productBelongsToCategory(Map<dynamic, dynamic> item, String? categoryKey) {
+  if (categoryKey == null || categoryKey.trim().isEmpty) return true;
+  final wanted = categoryKey.trim();
+  final keys = <String>{
+    '${item['category_local_id'] ?? ''}'.trim(),
+    '${item['pos_item_category_id'] ?? ''}'.trim(),
+    '${item['category_id'] ?? ''}'.trim(),
+  }..removeWhere((e) => e.isEmpty);
+  return keys.contains(wanted);
+}
+
 /// Display name from a nested relation that may be Map, String, or null.
 String nestedName(dynamic value, {String fallback = '—'}) {
   if (value is Map) {

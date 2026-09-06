@@ -27,6 +27,29 @@ void main() {
     expect(nestedField({'name': 'x'}, 'name'), 'x');
   });
 
+  test('productBelongsToCategory matches local UUID and server ids', () {
+    expect(
+      productBelongsToCategory(
+        {'category_local_id': 'cat-uuid', 'pos_item_category_id': 3},
+        'cat-uuid',
+      ),
+      isTrue,
+    );
+    expect(
+      productBelongsToCategory(
+        {'category_local_id': 'w1_cat_1', 'pos_item_category_id': 1},
+        '1',
+      ),
+      isTrue,
+    );
+    expect(
+      productBelongsToCategory({'category_local_id': 'other'}, 'cat-uuid'),
+      isFalse,
+    );
+    expect(entityKey({'local_id': 'abc', 'id': 9}), 'abc');
+    expect(entityKey({'id': '2'}), '2');
+  });
+
   test('asStringKeyedMap and asMapList never throw on bad payloads', () {
     expect(asStringKeyedMap(null), isEmpty);
     expect(asStringKeyedMap('bad'), isEmpty);
