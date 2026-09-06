@@ -954,6 +954,34 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
     if (mounted) setState(() {});
   }
 
+  Widget _catChip(String label, bool selected, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: PosTap(
+        onTap: onTap,
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.brand : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+            border: Border.all(
+              color: selected ? HasimColors.brand : HasimColors.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? Colors.white : HasimColors.ink,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = ref.watch(catalogItemsProvider);
@@ -1017,6 +1045,31 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
           ],
         ),
         const SizedBox(height: 10),
+        if (widget.showMobileCategories)
+          SizedBox(
+            height: 48,
+            child: ref.watch(categoriesProvider).when(
+              data: (list) => ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _catChip(
+                    'الكل',
+                    selectedCategoryId == null,
+                    () => onCategory(null),
+                  ),
+                  for (final cat in list)
+                    _catChip(
+                      (cat['name'] as String?) ?? '',
+                      selectedCategoryId == entityKey(cat),
+                      () => onCategory(entityKey(cat)),
+                    ),
+                ],
+              ),
+              loading: () => const SizedBox.shrink(),
+              error: (_, _) => const SizedBox.shrink(),
+            ),
+          ),
+        if (widget.showMobileCategories) const SizedBox(height: 10),
         Expanded(
           child: items.when(
             data: (list) {
