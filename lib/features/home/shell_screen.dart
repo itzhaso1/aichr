@@ -118,15 +118,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     _bootstrapInFlight = false;
   }
 
-  void _selectSection(_PosSection next) {
-    if (next == _section) return;
-    // Defer so we never swap the product grid away mid mouse-tracker update.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _section == next) return;
-      setState(() => _section = next);
-    });
-  }
-
   void _applyBootstrapPayload(
     Map<String, dynamic> data, {
     required bool fromCache,
@@ -160,18 +151,20 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   Widget build(BuildContext context) {
     ref.listen<PosShellTab?>(posShellNavProvider, (prev, next) {
       if (next == null) return;
-      _selectSection(switch (next) {
-        PosShellTab.cashier => _PosSection.cashier,
-        PosShellTab.tables => _PosSection.tables,
-        PosShellTab.orders => _PosSection.orders,
-        PosShellTab.menu => _PosSection.menu,
-        PosShellTab.kitchen => _PosSection.kitchen,
-        PosShellTab.invoices => _PosSection.invoices,
-        PosShellTab.customers => _PosSection.customers,
-        PosShellTab.items => _PosSection.items,
-        PosShellTab.reports => _PosSection.reports,
-        PosShellTab.sync => _PosSection.settings,
-        PosShellTab.settings => _PosSection.settings,
+      setState(() {
+        _section = switch (next) {
+          PosShellTab.cashier => _PosSection.cashier,
+          PosShellTab.tables => _PosSection.tables,
+          PosShellTab.orders => _PosSection.orders,
+          PosShellTab.menu => _PosSection.menu,
+          PosShellTab.kitchen => _PosSection.kitchen,
+          PosShellTab.invoices => _PosSection.invoices,
+          PosShellTab.customers => _PosSection.customers,
+          PosShellTab.items => _PosSection.items,
+          PosShellTab.reports => _PosSection.reports,
+          PosShellTab.sync => _PosSection.settings,
+          PosShellTab.settings => _PosSection.settings,
+        };
       });
       Future.microtask(
         () => ref.read(posShellNavProvider.notifier).state = null,
@@ -204,28 +197,37 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ),
           _TopNav(
             section: _section,
-            onSelect: _selectSection,
+            onSelect: (s) => setState(() => _section = s),
           ),
           Expanded(
-            child: IndexedStack(
-              index: _section.index,
-              sizing: StackFit.expand,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                _CashierHome(
-                  isDesktop: isDesktop,
-                  isTablet: isTablet,
-                  search: _search,
-                  onCheckout: _checkout,
+                Offstage(
+                  offstage: _section != _PosSection.cashier,
+                  child: TickerMode(
+                    enabled: _section == _PosSection.cashier,
+                    child: ExcludeFocus(
+                      excluding: _section != _PosSection.cashier,
+                      child: _CashierHome(
+                        isDesktop: isDesktop,
+                        isTablet: isTablet,
+                        search: _search,
+                        onCheckout: _checkout,
+                      ),
+                    ),
+                  ),
                 ),
-                const TablesBoard(),
-                const OrdersList(),
-                const MenuOrdersFeed(),
-                const KitchenBoard(),
-                InvoicesList(active: _section == _PosSection.invoices),
-                const CustomersPanel(),
-                const ItemsAdminPanel(),
-                DailyReportsPanel(active: _section == _PosSection.reports),
-                const SettingsPanel(),
+                if (_section != _PosSection.cashier)
+                  Positioned.fill(
+                    child: Material(
+                      color: HasimColors.page,
+                      child: KeyedSubtree(
+                        key: ValueKey(_section),
+                        child: _sectionPanel(_section),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -235,6 +237,23 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ? _MobileCartFab(onOpen: () => _openCartSheet(context))
           : null,
     );
+  }
+
+  /// Build only the selected non-cashier panel. IndexedStack of every tab
+  /// rebuilt the whole scaffold (including the nav) when any panel threw.
+  Widget _sectionPanel(_PosSection section) {
+    return switch (section) {
+      _PosSection.cashier => const SizedBox.shrink(),
+      _PosSection.tables => const TablesBoard(),
+      _PosSection.orders => const OrdersList(),
+      _PosSection.menu => const MenuOrdersFeed(),
+      _PosSection.kitchen => const KitchenBoard(),
+      _PosSection.invoices => const InvoicesList(),
+      _PosSection.customers => const CustomersPanel(),
+      _PosSection.items => const ItemsAdminPanel(),
+      _PosSection.reports => const DailyReportsPanel(),
+      _PosSection.settings => const SettingsPanel(),
+    };
   }
 
   Future<void> _openCartSheet(BuildContext context) async {
@@ -615,54 +634,57 @@ class _TopNav extends ConsumerWidget {
       (_PosSection.settings, 'الإعدادات'),
     ];
     final menuBadge = ref.watch(menuNewOrdersCountProvider);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-      decoration: const BoxDecoration(
-        color: HasimColors.surface,
-        border: Border(bottom: BorderSide(color: HasimColors.border)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final item in items) ...[
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  HsNavPill(
-                    label: item.$2,
-                    selected: section == item.$1,
-                    onTap: () => onSelect(item.$1),
-                  ),
-                  if (item.$1 == _PosSection.menu && menuBadge > 0)
-                    Positioned(
-                      top: -4,
-                      left: -2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: HasimColors.warning,
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text(
-                          '$menuBadge',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
+    return Material(
+      color: HasimColors.surface,
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: HasimColors.border)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final item in items) ...[
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    HsNavPill(
+                      label: item.$2,
+                      selected: section == item.$1,
+                      onTap: () => onSelect(item.$1),
+                    ),
+                    if (item.$1 == _PosSection.menu && menuBadge > 0)
+                      Positioned(
+                        top: -4,
+                        left: -2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: HasimColors.warning,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(
+                            '$menuBadge',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 6),
+                  ],
+                ),
+                const SizedBox(width: 6),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

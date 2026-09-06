@@ -236,7 +236,10 @@ class HsNavPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PosTap(
+    // Do not wrap nav in PosTap: deferred/gated hit-testing makes the bar
+    // feel dead, especially while the cashier grid is hovered.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

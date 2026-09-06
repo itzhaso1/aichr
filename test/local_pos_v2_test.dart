@@ -9,6 +9,7 @@ import 'package:hasim_cashier/core/repositories/catalog_repository.dart';
 import 'package:hasim_cashier/core/repositories/sync_queue_repository.dart';
 import 'package:hasim_cashier/core/repositories/tables_repository.dart';
 import 'package:hasim_cashier/core/sync/sync_engine_v2.dart';
+import 'package:hasim_cashier/core/util/json_numbers.dart';
 
 void main() {
   late AppDatabase db;
@@ -50,6 +51,58 @@ void main() {
     expect(a.single['name'], 'شاي أ');
     expect(b.single['name'], 'قهوة ب');
     expect(await repo.products(3), isEmpty);
+  });
+
+  test('category chips match products by UUID local_id not numeric id', () async {
+    final now = DateTime.now();
+    await db.into(db.localCategories).insert(
+          LocalCategoriesCompanion.insert(
+            localId: 'cat-uuid-drinks',
+            workspaceId: 1,
+            name: 'مشروبات',
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localCategories).insert(
+          LocalCategoriesCompanion.insert(
+            localId: 'cat-uuid-food',
+            workspaceId: 1,
+            name: 'أكل',
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-tea',
+            workspaceId: 1,
+            name: 'شاي',
+            categoryLocalId: const Value('cat-uuid-drinks'),
+            price: const Value(500),
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-burger',
+            workspaceId: 1,
+            name: 'برجر',
+            categoryLocalId: const Value('cat-uuid-food'),
+            price: const Value(1500),
+            updatedAt: now,
+          ),
+        );
+
+    final repo = CatalogRepository(db);
+    final cats = await repo.categories(1);
+    final products = await repo.products(1);
+    final drinks = cats.firstWhere((c) => c['name'] == 'مشروبات');
+    final key = entityKey(drinks);
+    expect(key, 'cat-uuid-drinks');
+    final matched = products
+        .where((p) => productBelongsToCategory(p, key))
+        .map((p) => p['name'])
+        .toList();
+    expect(matched, ['شاي']);
   });
 
   test('offline POS ready only after initial sync flag or local products',
