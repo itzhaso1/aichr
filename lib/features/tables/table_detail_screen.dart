@@ -548,13 +548,16 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       final workspaceId = _workspaceId;
       if (workspaceId == null) return;
       final localId = '${order['local_id'] ?? ''}';
+      final serverId = asInt(order['id']);
       final resolvedLocalId = localId.isNotEmpty
           ? localId
-          : (await ref.read(ordersRepositoryProvider).findByServerId(
+          : serverId == null
+              ? null
+              : (await ref.read(ordersRepositoryProvider).findByServerId(
                     workspaceId: workspaceId,
-                    serverId: (order['id'] as num).toInt(),
+                    serverId: serverId,
                   ))
-              ?.localId;
+                  ?.localId;
       if (resolvedLocalId == null) return;
       final deviceId =
           await ref.read(deviceIdentityProvider).getOrCreateDeviceId();
@@ -671,13 +674,16 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     final workspaceId = _workspaceId;
     if (workspaceId == null) return;
     final localId = '${order['local_id'] ?? ''}';
+    final serverId = asInt(order['id']);
     final resolved = localId.isNotEmpty
         ? localId
-        : (await ref.read(ordersRepositoryProvider).findByServerId(
+        : serverId == null
+            ? null
+            : (await ref.read(ordersRepositoryProvider).findByServerId(
                   workspaceId: workspaceId,
-                  serverId: (order['id'] as num).toInt(),
+                  serverId: serverId,
                 ))
-            ?.localId;
+                ?.localId;
     if (resolved == null) return;
     final deviceId =
         await ref.read(deviceIdentityProvider).getOrCreateDeviceId();
@@ -883,15 +889,17 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (selected == null || selected.isEmpty) return;
     final selectedById = <int, int>{};
     for (final row in selected) {
-      selectedById[(row['order_item_id'] as num).toInt()] =
-          (row['quantity'] as num).toInt();
+      final rowId = asInt(row['order_item_id']);
+      if (rowId == null) continue;
+      selectedById[rowId] = asIntOr(row['quantity']);
     }
     final moveItems = <Map<String, dynamic>>[];
     var groupAQty = 0;
     var groupBQty = 0;
     for (final item in items) {
-      final id = (item['order_item_id'] as num).toInt();
-      final maxQty = (item['quantity'] as num).toInt();
+      final id = asInt(item['order_item_id']);
+      if (id == null) continue;
+      final maxQty = asIntOr(item['quantity'], 1);
       final qtyA = selectedById[id] ?? 0;
       final qtyB = maxQty - qtyA;
       groupAQty += qtyA;

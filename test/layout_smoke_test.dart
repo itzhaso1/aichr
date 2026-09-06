@@ -155,6 +155,67 @@ void main() {
     expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
+  testWidgets('transfer wizard accepts string table ids without String-as-num',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () {
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => const TableTransferWizard(
+                    title: 'نقل الطاولة',
+                    currentTableName: 'T1',
+                    candidates: [
+                      {'id': '2', 'name': 'T2', 'status': 'available'},
+                    ],
+                    confirmLabel: 'تأكيد',
+                  ),
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('التالي'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('T2'), findsOneWidget);
+    expect(errors.where((e) => '$e'.contains('subtype')), isEmpty);
+  });
+
+  testWidgets('split bill wizard accepts string qty/price without String-as-num',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SplitBillWizard(
+          sessionTotal: 20,
+          items: [
+            {
+              'name': 'شاي',
+              'quantity': '2',
+              'unit_price': '10.00',
+              'order_item_id': '11',
+            },
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('التالي'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('المتاح: 2'), findsOneWidget);
+    expect(errors.where((e) => '$e'.contains('subtype')), isEmpty);
+  });
+
   testWidgets('nav pills and product hover path do not throw mouse_tracker',
       (tester) async {
     var taps = 0;

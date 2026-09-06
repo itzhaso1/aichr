@@ -1,3 +1,5 @@
+import '../util/json_numbers.dart';
+
 enum SyncStatus { pending, syncing, synced, failed }
 
 /// Local table/takeaway order waiting for Laravel confirmation.
@@ -49,9 +51,9 @@ class PendingOrder {
       };
 
   double get subtotal => items.fold<double>(0, (sum, item) {
-        final qty = (item['quantity'] as num?)?.toDouble() ?? 0;
-        final price = (item['unit_price'] as num?)?.toDouble() ?? 0;
-        final total = (item['total_amount'] as num?)?.toDouble();
+        final qty = asDoubleOr(item['quantity']);
+        final price = asDoubleOr(item['unit_price']);
+        final total = asDouble(item['total_amount']);
         return sum + (total ?? qty * price);
       });
 
@@ -101,8 +103,8 @@ class PendingOrder {
             'unit_price': item['unit_price'] ?? 0,
             'discount_amount': item['discount_amount'] ?? 0,
             'total_amount': item['total_amount'] ??
-                ((item['quantity'] as num?) ?? 0) *
-                    ((item['unit_price'] as num?) ?? 0),
+                (asDoubleOr(item['quantity']) *
+                    asDoubleOr(item['unit_price'])),
           },
       ],
     };
@@ -133,8 +135,8 @@ class PendingOrder {
     final key = '${raw['idempotency_key'] ?? raw['client_reference'] ?? raw['local_id']}';
     final localId = '${raw['local_id'] ?? key}';
     final items = _itemsFrom(raw['items'] ?? payload['items']);
-    final tableId = (raw['table_id'] as num?)?.toInt() ??
-        (payload['dining_table_id'] as num?)?.toInt();
+    final tableId = asInt(raw['table_id']) ??
+        asInt(payload['dining_table_id']);
     final statusName = '${raw['status'] ?? SyncStatus.pending.name}';
     final status = SyncStatus.values.firstWhere(
       (s) => s.name == statusName,
@@ -143,7 +145,7 @@ class PendingOrder {
     return PendingOrder(
       localId: localId,
       idempotencyKey: key.isEmpty ? localId : key,
-      workspaceId: (raw['workspace_id'] as num?)?.toInt(),
+      workspaceId: asInt(raw['workspace_id']),
       tableId: tableId,
       orderType: '${raw['order_type'] ?? payload['order_type'] ?? 'table'}',
       items: items,
@@ -151,11 +153,9 @@ class PendingOrder {
       createdAt: DateTime.tryParse('${raw['created_at'] ?? ''}') ??
           DateTime.now(),
       status: status,
-      retryCount: (raw['retry_count'] as num?)?.toInt() ??
-          (raw['attempts'] as num?)?.toInt() ??
-          0,
+      retryCount: asInt(raw['retry_count']) ?? asIntOr(raw['attempts']),
       lastError: raw['last_error'] as String?,
-      serverOrderId: (raw['server_order_id'] as num?)?.toInt(),
+      serverOrderId: asInt(raw['server_order_id']),
     );
   }
 

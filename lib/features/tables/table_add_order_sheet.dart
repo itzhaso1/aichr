@@ -7,6 +7,7 @@ import '../../core/local_db/local_db_providers.dart';
 import '../../core/sync/pos_sync_coordinator.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../cart/cart_controller.dart';
 
@@ -140,7 +141,7 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
     return _catalog.where((item) {
       if (item['is_active'] == false) return false;
       if (_categoryId != null &&
-          (item['pos_item_category_id'] as num?)?.toInt() != _categoryId) {
+          asInt(item['pos_item_category_id']) != _categoryId) {
         return false;
       }
       if (q.isEmpty) return true;
@@ -155,8 +156,14 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
       _lines.fold<double>(0, (sum, l) => sum + l.quantity * l.unitPrice);
 
   void _addItem(Map<String, dynamic> item) {
-    final id = (item['id'] as num).toInt();
-    final existing = _lines.indexWhere((l) => l.menuItemId == id);
+    final id = asInt(item['id']);
+    final localId = '${item['local_id'] ?? ''}'.trim();
+    if (id == null && localId.isEmpty) return;
+    final existing = _lines.indexWhere((l) {
+      if (id != null && l.menuItemId == id) return true;
+      if (localId.isNotEmpty && l.productLocalId == localId) return true;
+      return false;
+    });
     setState(() {
       if (existing >= 0) {
         _lines[existing].quantity++;
@@ -164,8 +171,9 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
         _lines.add(
           _DraftLine(
             menuItemId: id,
+            productLocalId: localId.isEmpty ? null : localId,
             name: '${item['name']}',
-            unitPrice: (item['price'] as num?)?.toDouble() ?? 0,
+            unitPrice: asDoubleOr(item['price']),
             quantity: 1,
           ),
         );
@@ -191,6 +199,7 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
             for (final line in _lines)
               {
                 'pos_menu_item_id': line.menuItemId,
+                'product_local_id': line.productLocalId,
                 'name': line.name,
                 'quantity': line.quantity,
                 'unit_price': line.unitPrice,
@@ -312,10 +321,10 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
                   children: [
                     _chip('الكل', null),
                     for (final c in _categories)
-                      if (c['is_active'] != false)
+                      if (c['is_active'] != false && asInt(c['id']) != null)
                         _chip(
                           '${c['name']}',
-                          (c['id'] as num).toInt(),
+                          asInt(c['id']),
                         ),
                   ],
                 ),
@@ -352,8 +361,7 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
                                     ),
                                   ),
                                   subtitle: Text(
-                                    ((item['price'] as num?) ?? 0)
-                                        .toStringAsFixed(2),
+                                    asDoubleOr(item['price']).toStringAsFixed(2),
                                   ),
                                   trailing: const Icon(Icons.add_circle_outline),
                                   onTap: () => _addItem(item),
@@ -526,13 +534,15 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
 
 class _DraftLine {
   _DraftLine({
-    required this.menuItemId,
+    this.menuItemId,
+    this.productLocalId,
     required this.name,
     required this.unitPrice,
     required this.quantity,
   });
 
-  final int menuItemId;
+  final int? menuItemId;
+  final String? productLocalId;
   final String name;
   final double unitPrice;
   int quantity;

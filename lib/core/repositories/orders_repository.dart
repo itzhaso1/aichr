@@ -110,31 +110,24 @@ class OrdersRepository {
                 localId: '${item['local_id']}',
                 workspaceId: workspaceId,
                 orderLocalId: key,
-                productServerId: Value(
-                  (item['pos_menu_item_id'] as num?)?.toInt(),
-                ),
+                productServerId: Value(asInt(item['pos_menu_item_id'])),
                 productLocalId: Value(
                   await _db.existingFk(
                     'local_products',
                     'local_id',
-                    (item['pos_menu_item_id'] as num?) == null
-                        ? null
-                        : LocalIds.product(
-                            workspaceId,
-                            (item['pos_menu_item_id'] as num).toInt(),
-                          ),
+                    _productLocalIdHint(workspaceId, item),
                   ),
                 ),
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
-                quantity: (item['quantity'] as num).toInt(),
-                unitPrice: Money.toCents((item['unit_price'] as num?) ?? 0),
+                quantity: asIntOr(item['quantity']),
+                unitPrice: Money.toCents(item['unit_price']),
                 discountAmount: Value(
-                  Money.toCents((item['discount_amount'] as num?) ?? 0),
+                  Money.toCents(item['discount_amount']),
                 ),
                 totalAmount: Money.toCents(
-                  (item['total_amount'] as num?) ??
-                      ((item['quantity'] as num).toDouble() *
-                          ((item['unit_price'] as num?)?.toDouble() ?? 0)),
+                  item['total_amount'] ??
+                      (asIntOr(item['quantity']) *
+                          asDoubleOr(item['unit_price'])),
                 ),
                 updatedAt: now,
               ),
@@ -231,31 +224,24 @@ class OrdersRepository {
                 localId: '${item['local_id']}',
                 workspaceId: workspaceId,
                 orderLocalId: key,
-                productServerId: Value(
-                  (item['pos_menu_item_id'] as num?)?.toInt(),
-                ),
+                productServerId: Value(asInt(item['pos_menu_item_id'])),
                 productLocalId: Value(
                   await _db.existingFk(
                     'local_products',
                     'local_id',
-                    (item['pos_menu_item_id'] as num?) == null
-                        ? null
-                        : LocalIds.product(
-                            workspaceId,
-                            (item['pos_menu_item_id'] as num).toInt(),
-                          ),
+                    _productLocalIdHint(workspaceId, item),
                   ),
                 ),
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
-                quantity: (item['quantity'] as num).toInt(),
-                unitPrice: Money.toCents((item['unit_price'] as num?) ?? 0),
+                quantity: asIntOr(item['quantity']),
+                unitPrice: Money.toCents(item['unit_price']),
                 discountAmount: Value(
-                  Money.toCents((item['discount_amount'] as num?) ?? 0),
+                  Money.toCents(item['discount_amount']),
                 ),
                 totalAmount: Money.toCents(
-                  (item['total_amount'] as num?) ??
-                      ((item['quantity'] as num).toDouble() *
-                          ((item['unit_price'] as num?)?.toDouble() ?? 0)),
+                  item['total_amount'] ??
+                      (asIntOr(item['quantity']) *
+                          asDoubleOr(item['unit_price'])),
                 ),
                 updatedAt: now,
               ),
@@ -337,31 +323,24 @@ class OrdersRepository {
                 localId: '${item['local_id']}',
                 workspaceId: workspaceId,
                 orderLocalId: localId,
-                productServerId: Value(
-                  (item['pos_menu_item_id'] as num?)?.toInt(),
-                ),
+                productServerId: Value(asInt(item['pos_menu_item_id'])),
                 productLocalId: Value(
                   await _db.existingFk(
                     'local_products',
                     'local_id',
-                    (item['pos_menu_item_id'] as num?) == null
-                        ? null
-                        : LocalIds.product(
-                            workspaceId,
-                            (item['pos_menu_item_id'] as num).toInt(),
-                          ),
+                    _productLocalIdHint(workspaceId, item),
                   ),
                 ),
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
-                quantity: (item['quantity'] as num).toInt(),
-                unitPrice: Money.toCents((item['unit_price'] as num?) ?? 0),
+                quantity: asIntOr(item['quantity']),
+                unitPrice: Money.toCents(item['unit_price']),
                 discountAmount: Value(
-                  Money.toCents((item['discount_amount'] as num?) ?? 0),
+                  Money.toCents(item['discount_amount']),
                 ),
                 totalAmount: Money.toCents(
-                  (item['total_amount'] as num?) ??
-                      ((item['quantity'] as num).toDouble() *
-                          ((item['unit_price'] as num?)?.toDouble() ?? 0)),
+                  item['total_amount'] ??
+                      (asIntOr(item['quantity']) *
+                          asDoubleOr(item['unit_price'])),
                 ),
                 updatedAt: now,
               ),
@@ -802,9 +781,18 @@ class OrdersRepository {
       if (qty <= 0) continue;
       final price = asDoubleOr(raw['unit_price']);
       final total = asDouble(raw['total_amount']) ?? qty * price;
+      final serverId = asInt(raw['pos_menu_item_id']);
+      final hintedLocal = '${raw['product_local_id'] ?? ''}'.trim();
+      final productLocalId = hintedLocal.isNotEmpty
+          ? hintedLocal
+          : (serverId == null &&
+                  '${raw['pos_menu_item_id'] ?? ''}'.trim().isNotEmpty
+              ? '${raw['pos_menu_item_id']}'.trim()
+              : null);
       out.add({
         'local_id': raw['local_id'] ?? _newItemId(),
-        'pos_menu_item_id': asInt(raw['pos_menu_item_id']),
+        'pos_menu_item_id': serverId,
+        'product_local_id': productLocalId,
         'name': raw['name'] ?? raw['product_name'] ?? 'صنف',
         'product_name': raw['product_name'] ?? raw['name'] ?? 'صنف',
         'variant_name': raw['variant_name'],
@@ -815,6 +803,14 @@ class OrdersRepository {
       });
     }
     return out;
+  }
+
+  String? _productLocalIdHint(int workspaceId, Map<String, dynamic> item) {
+    final hinted = '${item['product_local_id'] ?? ''}'.trim();
+    if (hinted.isNotEmpty) return hinted;
+    final serverId = asInt(item['pos_menu_item_id']);
+    if (serverId != null) return LocalIds.product(workspaceId, serverId);
+    return null;
   }
 
   ({double subtotal}) _totals(List<Map<String, dynamic>> items) {
@@ -906,12 +902,15 @@ class OrdersRepository {
   }) async {
     final now = DateTime.now();
     for (final item in items) {
-      final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+      final qty = asIntOr(item['quantity']);
       if (qty <= 0) continue;
-      final productServerId = (item['pos_menu_item_id'] as num?)?.toInt();
-      final productLocalId = productServerId == null
-          ? null
-          : LocalIds.product(workspaceId, productServerId);
+      final productServerId = asInt(item['pos_menu_item_id']);
+      final hintedLocal = '${item['product_local_id'] ?? ''}'.trim();
+      final productLocalId = hintedLocal.isNotEmpty
+          ? hintedLocal
+          : (productServerId == null
+              ? null
+              : LocalIds.product(workspaceId, productServerId));
       int? catalogProductId;
       if (productLocalId != null) {
         final product = await (_db.select(
@@ -921,7 +920,7 @@ class OrdersRepository {
           try {
             final payload = jsonDecode(product.payloadJson);
             if (payload is Map && payload['product_id'] != null) {
-              catalogProductId = (payload['product_id'] as num?)?.toInt();
+              catalogProductId = asInt(payload['product_id']);
             }
           } catch (_) {}
           if (product.stock != null) {

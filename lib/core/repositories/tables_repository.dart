@@ -7,6 +7,7 @@ import '../api/cashier_api.dart';
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
 import '../local_db/local_ids.dart';
+import '../util/json_numbers.dart';
 import 'sync_queue_repository.dart';
 
 /// Tables UI reads/writes through this repository only.
@@ -66,7 +67,7 @@ class TablesRepository {
           .get();
       final keep = <String>{};
       for (final table in tables) {
-        final serverId = (table['id'] as num?)?.toInt();
+        final serverId = asInt(table['id']);
         if (serverId == null) continue;
         final localId = tableLocalId(workspaceId, serverId);
         keep.add(localId);
@@ -97,7 +98,7 @@ class TablesRepository {
             : '${table['status'] ?? previous?.status ?? 'available'}';
         final sessionServerId = offlineOpen
             ? previous?.sessionServerId
-            : (table['session_id'] as num?)?.toInt() ??
+            : asInt(table['session_id']) ??
                 previous?.sessionServerId;
         if (offlineOpen && prevMap['session_client_id'] != null) {
           mergedPayload['session_client_id'] = prevMap['session_client_id'];
@@ -114,7 +115,7 @@ class TablesRepository {
                 name: '${table['name'] ?? previous?.name ?? ''}',
                 status: Value(status),
                 capacity: Value(
-                  (table['capacity'] as num?)?.toInt() ?? previous?.capacity,
+                  asInt(table['capacity']) ?? previous?.capacity,
                 ),
                 sessionServerId: Value(sessionServerId),
                 payloadJson: Value(jsonEncode(mergedPayload)),
@@ -162,12 +163,12 @@ class TablesRepository {
                   : '${detail['status'] ?? previous?.status ?? 'available'}',
             ),
             capacity: Value(
-              (detail['capacity'] as num?)?.toInt() ?? previous?.capacity,
+              asInt(detail['capacity']) ?? previous?.capacity,
             ),
             sessionServerId: Value(
               offlineOpen
                   ? previous?.sessionServerId
-                  : (detail['session_id'] as num?)?.toInt(),
+                  : asInt(detail['session_id']),
             ),
             payloadJson: Value(jsonEncode(merged)),
             updatedAt: now,
@@ -300,12 +301,10 @@ class TablesRepository {
       }
     }
     if (totalCents <= 0) {
-      totalCents = Money.toCents(
-        (payload['total'] as num?) ?? (payload['subtotal'] as num?) ?? 0,
-      );
-      subtotalCents = Money.toCents((payload['subtotal'] as num?) ?? 0);
-      taxCents = Money.toCents((payload['tax_amount'] as num?) ?? 0);
-      discountCents = Money.toCents((payload['discount_amount'] as num?) ?? 0);
+      totalCents = Money.toCents(payload['total'] ?? payload['subtotal']);
+      subtotalCents = Money.toCents(payload['subtotal']);
+      taxCents = Money.toCents(payload['tax_amount']);
+      discountCents = Money.toCents(payload['discount_amount']);
     }
 
     final method = (paymentMethod ?? 'cash').trim();
@@ -542,8 +541,8 @@ class TablesRepository {
     final localId = tableLocalId(workspaceId, tableServerId);
     final table = await _requireTable(workspaceId, localId);
     final payload = _safeMap(table.payloadJson);
-    final subtotal = (payload['subtotal'] as num?)?.toDouble() ?? 0;
-    final tax = (payload['tax_amount'] as num?)?.toDouble() ?? 0;
+    final subtotal = asDoubleOr(payload['subtotal']);
+    final tax = asDoubleOr(payload['tax_amount']);
     final total = (subtotal - discountAmount + tax).clamp(0, double.infinity);
     final next = {
       ...payload,
@@ -710,15 +709,15 @@ class TablesRepository {
       'id': toTableServerId,
       'status': 'occupied',
       'session_open': true,
-      'subtotal': ((toPayload['subtotal'] as num?)?.toDouble() ?? 0) +
-          ((fromPayload['subtotal'] as num?)?.toDouble() ?? 0),
-      'tax_amount': ((toPayload['tax_amount'] as num?)?.toDouble() ?? 0) +
-          ((fromPayload['tax_amount'] as num?)?.toDouble() ?? 0),
+      'subtotal': asDoubleOr(toPayload['subtotal']) +
+          asDoubleOr(fromPayload['subtotal']),
+      'tax_amount': asDoubleOr(toPayload['tax_amount']) +
+          asDoubleOr(fromPayload['tax_amount']),
       'discount_amount':
-          ((toPayload['discount_amount'] as num?)?.toDouble() ?? 0) +
-              ((fromPayload['discount_amount'] as num?)?.toDouble() ?? 0),
-      'total': ((toPayload['total'] as num?)?.toDouble() ?? 0) +
-          ((fromPayload['total'] as num?)?.toDouble() ?? 0),
+          asDoubleOr(toPayload['discount_amount']) +
+              asDoubleOr(fromPayload['discount_amount']),
+      'total': asDoubleOr(toPayload['total']) +
+          asDoubleOr(fromPayload['total']),
     };
     final clearedFrom = {
       ...fromPayload,
@@ -802,7 +801,7 @@ class TablesRepository {
       var newSubtotal = 0;
       for (final move in moveItems) {
         final itemLocalId = '${move['item_local_id'] ?? ''}';
-        final qty = (move['quantity'] as num?)?.toInt() ?? 0;
+        final qty = asIntOr(move['quantity']);
         if (itemLocalId.isEmpty || qty <= 0) continue;
         final item = await (_db.select(_db.localOrderItems)
               ..where((t) =>
@@ -888,7 +887,7 @@ class TablesRepository {
           'notes': 'تقسيم حساب (محلي)',
           'items': [
             for (final move in moveItems)
-              if ((move['quantity'] as num?)?.toInt() != null)
+              if (asInt(move['quantity']) != null)
                 {
                   'pos_menu_item_id': move['pos_menu_item_id'],
                   'quantity': move['quantity'],

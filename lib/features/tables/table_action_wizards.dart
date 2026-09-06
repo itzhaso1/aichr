@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/pos/pos_labels.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../../core/widgets/pos_tap.dart';
 
@@ -113,7 +114,8 @@ class _TableTransferWizardState extends State<TableTransferWizard> {
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final t = widget.candidates[index];
-          final id = (t['id'] as num).toInt();
+          final id = asInt(t['id']);
+          if (id == null) return const SizedBox.shrink();
           final selected = _targetId == id;
           return Material(
             color: selected ? HasimColors.ctaSoft : Colors.white,
@@ -159,7 +161,7 @@ class _TableTransferWizardState extends State<TableTransferWizard> {
       );
     }
     final target = widget.candidates.cast<Map<String, dynamic>?>().firstWhere(
-          (t) => (t?['id'] as num?)?.toInt() == _targetId,
+          (t) => asInt(t?['id']) == _targetId,
           orElse: () => null,
         );
     return HsCard(
@@ -224,15 +226,15 @@ class _SplitBillWizardState extends State<SplitBillWizard> {
   double get _selectedTotal {
     var sum = 0.0;
     for (final item in _items) {
-      final qty = (item['selected_qty'] as num?)?.toInt() ?? 0;
-      final unit = (item['unit_price'] as num?)?.toDouble() ?? 0;
+      final qty = asIntOr(item['selected_qty']);
+      final unit = asDoubleOr(item['unit_price']);
       sum += qty * unit;
     }
     return sum;
   }
 
   bool get _hasSelection =>
-      _items.any((e) => ((e['selected_qty'] as num?) ?? 0) > 0);
+      _items.any((e) => asIntOr(e['selected_qty']) > 0);
 
   @override
   Widget build(BuildContext context) {
@@ -316,8 +318,8 @@ class _SplitBillWizardState extends State<SplitBillWizard> {
         itemCount: _items.length,
         itemBuilder: (context, index) {
           final item = _items[index];
-          final max = (item['quantity'] as num).toInt();
-          final qty = (item['selected_qty'] as num).toInt();
+          final max = asIntOr(item['quantity'], 1);
+          final qty = asIntOr(item['selected_qty']);
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: HsCard(
@@ -336,7 +338,7 @@ class _SplitBillWizardState extends State<SplitBillWizard> {
                           ),
                         ),
                         Text(
-                          'المتاح: $max · ${((item['unit_price'] as num?) ?? 0).toStringAsFixed(2)}',
+                          'المتاح: $max · ${asDoubleOr(item['unit_price']).toStringAsFixed(2)}',
                           style: const TextStyle(
                             fontSize: 11,
                             color: HasimColors.muted,
@@ -405,7 +407,7 @@ class _SplitBillWizardState extends State<SplitBillWizard> {
       return;
     }
     final selected = _items
-        .where((e) => ((e['selected_qty'] as num?) ?? 0) > 0)
+        .where((e) => asIntOr(e['selected_qty']) > 0)
         .map(
           (e) => {
             'order_item_id': e['order_item_id'],

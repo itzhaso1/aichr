@@ -9,6 +9,7 @@ import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_mode.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../cart/cart_controller.dart';
 
@@ -139,12 +140,12 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           await admin.createProduct(
             workspaceId: workspaceId,
             name: '${result['name']}',
-            price: (result['price'] as num?)?.toDouble() ?? 0,
+            price: asDoubleOr(result['price']),
             sku: result['sku'] as String?,
             barcode: result['barcode'] as String?,
-            cost: (result['cost'] as num?)?.toDouble() ?? 0,
-            taxRate: (result['tax_rate'] as num?)?.toDouble() ?? 0,
-            stock: (result['stock'] as num?)?.toInt(),
+            cost: asDoubleOr(result['cost']),
+            taxRate: asDoubleOr(result['tax_rate']),
+            stock: asInt(result['stock']),
             trackStock: result['track_stock'] == true,
             categoryLocalId: result['category_local_id'] as String?,
             permissions: session?.permissions ?? _perms,
@@ -154,11 +155,11 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             workspaceId: workspaceId,
             localId: '${existing['local_id'] ?? existing['id']}',
             name: '${result['name']}',
-            price: (result['price'] as num?)?.toDouble(),
+            price: asDouble(result['price']),
             sku: result['sku'] as String?,
             barcode: result['barcode'] as String?,
-            cost: (result['cost'] as num?)?.toDouble(),
-            stock: (result['stock'] as num?)?.toInt(),
+            cost: asDouble(result['cost']),
+            stock: asInt(result['stock']),
             permissions: session?.permissions ?? _perms,
           );
         }
@@ -530,7 +531,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
                         ),
                       ),
                       Text(
-                        ((item['price'] as num?) ?? 0).toStringAsFixed(2),
+                        asDoubleOr(item['price']).toStringAsFixed(2),
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
                           color: HasimColors.ctaDark,
@@ -593,14 +594,12 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     _size = TextEditingController(text: '${e?['size_label'] ?? ''}');
     _desc = TextEditingController(text: '${e?['description'] ?? ''}');
     _price = TextEditingController(
-      text: ((e?['price'] as num?) ?? 0).toStringAsFixed(2),
+      text: asDoubleOr(e?['price']).toStringAsFixed(2),
     );
     _currency = TextEditingController(text: '${e?['currency'] ?? 'SAR'}');
     _categoryId =
-        (e?['pos_item_category_id'] as num?)?.toInt() ??
-        (e?['category'] is Map
-            ? ((e!['category'] as Map)['id'] as num?)?.toInt()
-            : null);
+        asInt(e?['pos_item_category_id']) ??
+        (e?['category'] is Map ? asInt((e!['category'] as Map)['id']) : null);
     _active = e?['is_active'] != false;
   }
 
@@ -651,10 +650,11 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
                     child: Text('— بدون —'),
                   ),
                   for (final c in widget.categories)
-                    DropdownMenuItem<int?>(
-                      value: (c['id'] as num).toInt(),
-                      child: Text('${c['name']}'),
-                    ),
+                    if (asInt(c['id']) != null)
+                      DropdownMenuItem<int?>(
+                        value: asInt(c['id']),
+                        child: Text('${c['name']}'),
+                      ),
                 ],
                 onChanged: (v) => setState(() => _categoryId = v),
               ),
