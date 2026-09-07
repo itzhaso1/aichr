@@ -198,6 +198,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
           .read(posSyncCoordinatorProvider)
           .flushPendingOrders(workspaceId: workspaceId, deviceId: deviceId);
       if (!mounted) return;
+      ref.read(invoicesRevisionProvider.notifier).state++;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

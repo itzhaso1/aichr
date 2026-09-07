@@ -26,32 +26,50 @@ class LocalFinanceRepository {
     DateTime? onDate,
     bool fallbackAllWorkspaces = false,
   }) async {
-    var rows = await _queryRows(workspaceId: workspaceId);
+    var rows = List<LocalInvoice>.from(
+      await _queryRows(workspaceId: workspaceId),
+    );
+    if (fallbackAllWorkspaces) {
+      final all = await _queryRows();
+      if (all.length > rows.length) {
+        final seen = {for (final row in rows) row.localId};
+        for (final row in all) {
+          if (seen.add(row.localId)) rows.add(row);
+        }
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      }
+    }
     if (onDate != null) {
-      var day = [
+      final day = [
         for (final row in rows)
           if (_sameDay(row.createdAt, onDate)) row,
       ];
-      if (day.isEmpty && fallbackAllWorkspaces) {
-        rows = await _queryRows();
-        day = [
-          for (final row in rows)
-            if (_sameDay(row.createdAt, onDate)) row,
-        ];
-      }
       if (day.isNotEmpty) {
-        return [for (final row in day) _invoiceToMap(row)];
+        return _mapsFor(day);
       }
       if (!fallbackAllWorkspaces) return const [];
-      if (rows.isEmpty) {
-        rows = await _queryRows();
+    }
+    return _mapsFor(rows);
+  }
+
+  List<Map<String, dynamic>> _mapsFor(List<LocalInvoice> rows) {
+    final out = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      try {
+        out.add(_invoiceToMap(row));
+      } catch (_) {
+        out.add({
+          'id': row.localId,
+          'local_id': row.localId,
+          'invoice_number':
+              row.invoiceNumber ?? row.localInvoiceNumber ?? row.localId,
+          'total_amount': Money.fromCents(row.totalAmount),
+          'created_at': row.createdAt.toIso8601String(),
+          'closed_at': row.createdAt.toIso8601String(),
+        });
       }
-      return [for (final row in rows) _invoiceToMap(row)];
     }
-    if (rows.isEmpty && fallbackAllWorkspaces) {
-      rows = await _queryRows();
-    }
-    return [for (final row in rows) _invoiceToMap(row)];
+    return out;
   }
 
   Stream<List<LocalInvoice>> watchInvoices({int? workspaceId}) {

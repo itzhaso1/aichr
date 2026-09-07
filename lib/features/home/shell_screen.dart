@@ -228,9 +228,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
                   Positioned.fill(
                     child: Material(
                       color: HasimColors.page,
-                      child: KeyedSubtree(
-                        key: ValueKey(_section),
-                        child: _sectionPanel(_section),
+                      child: SizedBox.expand(
+                        child: KeyedSubtree(
+                          key: ValueKey(_section),
+                          child: _sectionPanel(_section),
+                        ),
                       ),
                     ),
                   ),

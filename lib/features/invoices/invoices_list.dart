@@ -123,12 +123,13 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Future<void> _openInvoice(Map<String, dynamic> invoice) async {
     try {
       final workspaceId = ref.read(workspaceIdProvider);
-      final localId = '${invoice['local_id'] ?? ''}';
+      final localId = '${invoice['local_id'] ?? ''}'.trim();
       Map<String, dynamic>? local;
-      if (workspaceId != null && localId.isNotEmpty) {
-        local = await ref
-            .read(localFinanceRepositoryProvider)
-            .getInvoice(workspaceId: workspaceId, localId: localId);
+      if (localId.isNotEmpty) {
+        local = await ref.read(localFinanceRepositoryProvider).getInvoice(
+              workspaceId: workspaceId,
+              localId: localId,
+            );
       }
       if (!mounted) return;
       final draft = Map<String, dynamic>.from(local ?? invoice);
@@ -192,102 +193,60 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   }
 
   Widget _buildBody() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'فواتير الكاشير المغلقة',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
+    if (_selected != null) {
+      return _InvoiceDetail(
+        invoice: _selected!,
+        onBack: () => setState(() => _selected = null),
+        onPrint: () => _printSelected(reprint: false),
+        onReprint: () => _printSelected(reprint: true),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.hasBoundedHeight &&
+            constraints.maxHeight.isFinite &&
+            constraints.maxHeight > 0;
+        final list = RefreshIndicator(
+          onRefresh: _load,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(child: _header()),
+              if (_loading && _invoices.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_error != null && _invoices.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: HsEmpty(
+                      title: 'تعذر تحميل الفواتير',
+                      subtitle: _error,
+                      actionLabel: 'إعادة المحاولة',
+                      onAction: _load,
                     ),
-                    SizedBox(height: 2),
-                    Text(
-                      'تُحفظ الفواتير على هذا الجهاز حتى بدون طابعة.',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: HasimColors.muted,
-                      ),
+                  ),
+                )
+              else if (_invoices.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: HsEmpty(
+                      title: 'لا توجد فواتير بعد.',
+                      subtitle:
+                          'بعد الدفع أو إغلاق الطاولة تظهر الفاتورة هنا تلقائياً. اضغط عليها لفتحها. لا يوجد خيار فتح في الإعدادات.',
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: _pickDate,
-                        icon: const Icon(Icons.calendar_today, size: 16),
-                        label: Text(_dateQuery),
-                      ),
-                      if (_dateFilter != null) ...[
-                        const SizedBox(width: 8),
-                        TextButton(
-                          onPressed: () async {
-                            setState(() => _dateFilter = null);
-                            await _load();
-                          },
-                          child: const Text('الكل'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: _loading && _invoices.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null && _invoices.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: HsEmpty(
-                    title: 'تعذر تحميل الفواتير',
-                    subtitle: _error,
-                    actionLabel: 'إعادة المحاولة',
-                    onAction: _load,
                   ),
                 )
-              : _invoices.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: HsEmpty(
-                    title: 'لا توجد فواتير محفوظة بعد.',
-                    subtitle:
-                        'بعد إغلاق الطاولة أو الدفع من الكاشير تُحفظ الفاتورة هنا تلقائياً، حتى لو لم توجد طابعة.',
-                  ),
-                )
-              : _selected != null
-              ? _InvoiceDetail(
-                  invoice: _selected!,
-                  onBack: () => setState(() => _selected = null),
-                  onPrint: () => _printSelected(reprint: false),
-                  onReprint: () => _printSelected(reprint: true),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(12),
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  sliver: SliverList.separated(
                     itemCount: _invoices.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
@@ -306,6 +265,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                     children: [
                                       Text(
                                         '${inv['invoice_number'] ?? inv['local_id'] ?? '—'}',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                         ),
@@ -314,7 +275,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                       Text(
                                         inv['table'] != null
                                             ? 'طاولة: ${nestedName(inv['table'])}'
-                                            : 'فاتورة محلية',
+                                            : 'فاتورة مكتملة · اضغط للعرض',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: HasimColors.muted,
@@ -323,6 +284,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                     ],
                                   ),
                                 ),
+                                const SizedBox(width: 8),
                                 Text(
                                   asDoubleOr(
                                     inv['total_amount'],
@@ -339,8 +301,70 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     },
                   ),
                 ),
-        ),
-      ],
+            ],
+          ),
+        );
+        if (!bounded) {
+          return SizedBox(
+            height: MediaQuery.sizeOf(context).height,
+            width: constraints.hasBoundedWidth && constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width,
+            child: list,
+          );
+        }
+        return list;
+      },
+    );
+  }
+
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'فواتير الكاشير',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'هذه فواتير مكتملة (مدفوعة). اضغط على الفاتورة لفتحها وطباعتها — ليس من الإعدادات.',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: HasimColors.muted,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _pickDate,
+                icon: const Icon(Icons.calendar_today, size: 16),
+                label: Text(_dateQuery),
+              ),
+              if (_dateFilter != null)
+                TextButton(
+                  onPressed: () async {
+                    setState(() => _dateFilter = null);
+                    await _load();
+                  },
+                  child: const Text('الكل'),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

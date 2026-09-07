@@ -235,4 +235,42 @@ void main() {
     expect(daily['summary']['invoices_count'], 1);
     expect(asDoubleOr(daily['summary']['invoice_sales_total']), 25);
   });
+
+  test('listInvoices fallback includes LOCAL invoices from another workspace',
+      () async {
+    final now = DateTime.now();
+    await db.into(db.localInvoices).insert(
+          LocalInvoicesCompanion.insert(
+            localId: 'inv-own',
+            workspaceId: PosMode.standaloneWorkspaceId,
+            deviceId: 'dev-1',
+            invoiceNumber: const Value('INV-OWN'),
+            totalAmount: const Value(1000),
+            createdAt: now,
+          ),
+        );
+    await db.into(db.localInvoices).insert(
+          LocalInvoicesCompanion.insert(
+            localId: 'inv-local-uuid',
+            workspaceId: 1,
+            deviceId: 'dev-1',
+            invoiceNumber: const Value(
+              'LOCAL-67b8052b-adbf-4d7c-a2e1-c3c06454f78e',
+            ),
+            totalAmount: const Value(1500),
+            createdAt: now,
+          ),
+        );
+    final listed = await finance.listInvoices(
+      workspaceId: PosMode.standaloneWorkspaceId,
+      fallbackAllWorkspaces: true,
+    );
+    expect(
+      listed.map((e) => e['invoice_number']),
+      containsAll([
+        'INV-OWN',
+        'LOCAL-67b8052b-adbf-4d7c-a2e1-c3c06454f78e',
+      ]),
+    );
+  });
 }
