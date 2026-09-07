@@ -571,6 +571,13 @@ void main() {
 
   test('device restore waits for API success before online', () {
     final controller = CashierLinkController();
+    if (AppConfig.offlineOnly) {
+      expect(controller.state.link, CashierLink.offline);
+      controller.setDeviceOnline(true);
+      controller.onApiSuccess();
+      expect(controller.state.link, CashierLink.offline);
+      return;
+    }
     controller.setDeviceOnline(false);
     expect(controller.state.link, CashierLink.offline);
     controller.setDeviceOnline(true);
