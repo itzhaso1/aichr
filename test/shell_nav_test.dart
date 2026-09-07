@@ -202,6 +202,7 @@ void main() {
     expect(find.text('الفواتير'), findsOneWidget);
     expect(find.text('التقارير'), findsOneWidget);
     expect(find.text('العملاء'), findsNothing);
+    expect(find.text('المستخدمون'), findsOneWidget);
 
     await tapNav(tester, 'الفواتير');
     expect(find.byType(InvoicesList), findsOneWidget);
@@ -219,7 +220,7 @@ void main() {
     expect(find.text('طاولة'), findsWidgets);
     expect(find.text('توصيل'), findsOneWidget);
     expect(find.text('طلب خارجي'), findsOneWidget);
-    expect(find.text('المطبخ'), findsNothing);
+    expect(find.text('المطبخ'), findsOneWidget);
 
     await tester.tap(find.text('مشروبات'));
     await tester.pump();

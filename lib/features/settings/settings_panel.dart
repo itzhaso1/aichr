@@ -6,6 +6,7 @@ import '../../core/audio/menu_sound_service.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/app_database.dart';
 import '../../core/local_db/local_db_providers.dart';
+import '../../core/navigation/pos_shell_nav.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/local_auth_service.dart';
@@ -293,6 +294,12 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   }
 
   Future<void> _addLocalTable() async {
+    if (!CashierPermissions.canCreateTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية إضافة طاولات.')),
+      );
+      return;
+    }
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -504,15 +511,15 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: username,
-                  decoration: const InputDecoration(labelText: 'اسم المستخدم'),
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'الإيميل'),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: pin,
                   obscureText: true,
-                  keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'PIN (4 أرقام على الأقل)',
+                    labelText: 'كلمة المرور (4 أحرف على الأقل)',
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -553,7 +560,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     if (!mounted) return;
     if (trimmedName.isEmpty || trimmedUser.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الاسم واسم المستخدم مطلوبان.')),
+        const SnackBar(content: Text('الاسم والإيميل مطلوبان.')),
       );
       return;
     }
@@ -564,6 +571,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             username: trimmedUser,
             pin: trimmedPin,
             role: role == 'chef' ? 'chef' : 'cashier',
+            actorPermissions: _perms,
           );
       await _refreshUsers();
       if (!mounted) return;
@@ -571,7 +579,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         SnackBar(
           content: Text(
             role == 'chef'
-                ? 'تم إنشاء حساب الشيف. يدخل من شاشة المطبخ أو برمز PIN.'
+                ? 'تم إنشاء حساب الشيف. يدخل بالإيميل وكلمة المرور إلى المطبخ.'
                 : 'تم إنشاء حساب الكاشير.',
           ),
         ),
@@ -593,6 +601,12 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       ),
     );
     final canManageUsers = CashierPermissions.canManageUsers(
+      CashierPermissions.resolve(
+        ref.watch(cashierPermissionsProvider),
+        ref.watch(authControllerProvider).valueOrNull?.permissions,
+      ),
+    );
+    final canCreateTables = CashierPermissions.canCreateTables(
       CashierPermissions.resolve(
         ref.watch(cashierPermissionsProvider),
         ref.watch(authControllerProvider).valueOrNull?.permissions,
@@ -638,11 +652,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 label: 'استعادة آخر نسخة',
                 onPressed: _restoreBackup,
               ),
-              const SizedBox(height: 8),
-              HsOutlineButton(
-                label: 'إضافة طاولة محلية',
-                onPressed: _addLocalTable,
-              ),
+              if (canCreateTables) ...[
+                const SizedBox(height: 8),
+                HsOutlineButton(
+                  label: 'إضافة طاولة محلية',
+                  onPressed: _addLocalTable,
+                ),
+              ],
             ],
           ),
         ),
@@ -658,7 +674,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'حساب الكاشير يفتح نقطة البيع. حساب الشيف يفتح المطبخ فقط.',
+                  'كل مستخدم يدخل بإيميل وكلمة مرور. الصلاحيات تُحدد لكل شخص بشكل مستقل من تبويب المستخدمون.',
                   style: TextStyle(fontSize: 12, color: HasimColors.muted),
                 ),
                 const SizedBox(height: 8),
@@ -673,7 +689,9 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                       title: Text(user.name),
-                      subtitle: Text(user.username),
+                      subtitle: Text(
+                        '${user.username} · ${LocalAuthService.roleLabelAr(user.role)}',
+                      ),
                       trailing: HsBadge(
                         label: LocalAuthService.roleLabelAr(user.role),
                         background: LocalAuthService.isKitchenRole(user.role)
@@ -684,6 +702,12 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                     ),
                 const SizedBox(height: 8),
                 HsPrimaryButton(
+                  label: 'إدارة المستخدمين والصلاحيات',
+                  onPressed: () =>
+                      requestPosShellTab(ref, PosShellTab.users),
+                ),
+                const SizedBox(height: 8),
+                HsOutlineButton(
                   label: 'إنشاء حساب كاشير أو شيف',
                   onPressed: _createStaffUser,
                 ),

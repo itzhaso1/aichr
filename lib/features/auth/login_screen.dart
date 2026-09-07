@@ -3,13 +3,15 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/auth/auth_controller.dart';
 import '../../core/pos/application/pos_providers.dart';
+import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
-/// Offline-only entry: cashier PIN, kitchen station, or first-time setup.
+/// Offline-only entry: email + password for cashier, chef, and admin.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -18,13 +20,23 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
   var _loading = true;
+  var _busy = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+  }
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
   }
 
   Future<void> _boot() async {
@@ -46,6 +58,26 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _error = 'تعذر فتح الوضع المحلي: $e';
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(authControllerProvider.notifier).loginStandalonePin(
+            username: _email.text.trim(),
+            pin: _password.text,
+          );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e is PosException ? e.messageAr : e.toString();
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -117,12 +149,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          'تشغيل محلي بدون إنترنت',
+                          'تسجيل الدخول',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'الكاشير للمبيعات. المطبخ محطة منفصلة للشيف قبل تسجيل الدخول.',
+                          'كل مستخدم يدخل بإيميله وكلمة المرور. بعد الدخول تُفتح الصفحات حسب صلاحياته.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 16),
@@ -163,6 +195,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           )
                         else ...[
+                          TextField(
+                            controller: _email,
+                            keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email],
+                            decoration: const InputDecoration(
+                              labelText: 'الإيميل',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: _password,
+                            obscureText: true,
+                            onSubmitted: (_) => _busy ? null : _submit(),
+                            decoration: const InputDecoration(
+                              labelText: 'كلمة المرور',
+                            ),
+                          ),
+                          const SizedBox(height: 16),
                           SizedBox(
                             height: 48,
                             child: FilledButton.icon(
@@ -174,25 +224,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                   ),
                                 ),
                               ),
-                              onPressed: () => context.go('/pin'),
-                              icon: const Icon(Icons.storefront_outlined),
-                              label: const Text('دخول الكاشير'),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            height: 48,
-                            child: OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    HasimRadius.md,
-                                  ),
-                                ),
-                              ),
-                              onPressed: () => context.go('/kitchen'),
-                              icon: const Icon(Icons.soup_kitchen_outlined),
-                              label: const Text('دخول المطبخ'),
+                              onPressed: _busy ? null : _submit,
+                              icon: const Icon(Icons.login),
+                              label: _busy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('دخول'),
                             ),
                           ),
                         ],

@@ -3,34 +3,32 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_controller.dart';
+import '../../core/permissions/cashier_permissions.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/widgets/hasim_widgets.dart';
-import 'kitchen_board.dart';
+import 'daily_reports_panel.dart';
 
-/// Isolated chef station — login + kitchen.use required.
-class KitchenStationScreen extends ConsumerWidget {
-  const KitchenStationScreen({super.key});
+/// Isolated reports station — login + reports.view required.
+class ReportsStationScreen extends ConsumerWidget {
+  const ReportsStationScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(authControllerProvider).valueOrNull;
-    final allowed = session?.canUseKitchen == true;
-    final chefName = session?.userName;
+    final allowed = CashierPermissions.canViewReports(session?.permissions);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: HasimColors.page,
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('المطبخ'),
+            const Text('التقارير'),
             Text(
               session == null
                   ? 'يتطلب تسجيل الدخول'
-                  : chefName == null || chefName.isEmpty
-                      ? 'محطة الشيف — طلبات التجهيز فقط'
-                      : 'شيف: $chefName',
+                  : 'مرحباً ${session.userName.isEmpty ? 'المستخدم' : session.userName}',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -45,11 +43,6 @@ class KitchenStationScreen extends ConsumerWidget {
               onPressed: () => context.go('/home'),
               child: const Text('الكاشير'),
             ),
-          if (session?.canViewReports == true)
-            TextButton(
-              onPressed: () => context.go('/reports'),
-              child: const Text('التقارير'),
-            ),
           TextButton.icon(
             onPressed: () async {
               await ref.read(authControllerProvider.notifier).logout();
@@ -60,16 +53,19 @@ class KitchenStationScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: !allowed
-          ? const Padding(
-              padding: EdgeInsets.all(16),
-              child: HsEmpty(
-                title: 'غير مصرح بدخول المطبخ',
-                subtitle:
-                    'سجّل الدخول بحساب يملك صلاحية صفحة المطبخ، أو اطلبها من المدير.',
-              ),
-            )
-          : const KitchenBoard(),
+      body: ColoredBox(
+        color: HasimColors.page,
+        child: !allowed
+            ? const Padding(
+                padding: EdgeInsets.all(16),
+                child: HsEmpty(
+                  title: 'غير مصرح بعرض التقارير',
+                  subtitle:
+                      'لا تملك صلاحية الدخول إلى صفحة التقارير. اطلبها من المدير.',
+                ),
+              )
+            : const DailyReportsPanel(),
+      ),
     );
   }
 }

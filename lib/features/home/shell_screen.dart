@@ -23,6 +23,7 @@ import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../../core/widgets/pos_tap.dart';
 import '../admin/admin_placeholders.dart';
+import '../admin/users_admin_panel.dart';
 import '../cart/cart_controller.dart';
 import '../invoices/invoices_list.dart';
 import '../orders/menu_orders_feed.dart';
@@ -41,6 +42,7 @@ enum _PosSection {
   customers,
   items,
   reports,
+  users,
   settings,
 }
 
@@ -166,6 +168,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           PosShellTab.customers => _PosSection.cashier,
           PosShellTab.items => _PosSection.items,
           PosShellTab.reports => _PosSection.reports,
+          PosShellTab.users => _PosSection.users,
           PosShellTab.sync => _PosSection.settings,
           PosShellTab.settings => _PosSection.settings,
         };
@@ -197,6 +200,22 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
             onLogout: () async {
               await ref.read(authControllerProvider.notifier).logout();
               if (context.mounted) context.go('/login');
+            },
+            onReports: () {
+              final router = GoRouter.maybeOf(context);
+              if (router != null) {
+                context.go('/reports');
+              } else {
+                setState(() => _section = _PosSection.reports);
+              }
+            },
+            onKitchen: () {
+              final router = GoRouter.maybeOf(context);
+              if (router != null) {
+                context.go('/kitchen');
+              } else {
+                setState(() => _section = _PosSection.orders);
+              }
             },
           ),
           _TopNav(
@@ -257,6 +276,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       _PosSection.customers => const SizedBox.shrink(),
       _PosSection.items => const ItemsAdminPanel(),
       _PosSection.reports => const DailyReportsPanel(),
+      _PosSection.users => const UsersAdminPanel(),
       _PosSection.settings => const SettingsPanel(),
     };
   }
@@ -493,11 +513,15 @@ class _TopHeader extends ConsumerWidget {
   const _TopHeader({
     required this.workspaceName,
     required this.onLogout,
+    required this.onReports,
+    required this.onKitchen,
     this.onCart,
   });
 
   final String workspaceName;
   final VoidCallback onLogout;
+  final VoidCallback onReports;
+  final VoidCallback onKitchen;
   final VoidCallback? onCart;
 
   @override
@@ -526,6 +550,8 @@ class _TopHeader extends ConsumerWidget {
                   children: [
                     Text(
                       workspaceName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 11,
                         color: HasimColors.muted,
@@ -542,62 +568,76 @@ class _TopHeader extends ConsumerWidget {
                   ],
                 ),
               ),
-              const Text(
-                'أوفلاين',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: HasimColors.muted,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (onCart != null)
-                PosTap(
-                  onTap: onCart,
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.shopping_bag_outlined),
-                        if (cartCount > 0) ...[
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: HasimColors.cta,
-                              borderRadius: BorderRadius.circular(
-                                HasimRadius.pill,
-                              ),
-                            ),
-                            child: Text(
-                              '$cartCount',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'أوفلاين',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: HasimColors.muted,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ..._headerShortcuts(ref),
+                      if (onCart != null)
+                        PosTap(
+                          onTap: onCart,
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.shopping_bag_outlined),
+                                if (cartCount > 0) ...[
+                                  const SizedBox(width: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: HasimColors.cta,
+                                      borderRadius: BorderRadius.circular(
+                                        HasimRadius.pill,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '$cartCount',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              PosTap(
-                onTap: onLogout,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  child: Text(
-                    'خروج',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: HasimColors.ink,
-                    ),
+                        ),
+                      PosTap(
+                        onTap: onLogout,
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          child: Text(
+                            'خروج',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: HasimColors.ink,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -606,6 +646,45 @@ class _TopHeader extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  List<Widget> _headerShortcuts(WidgetRef ref) {
+    final perms = CashierPermissions.resolve(
+      ref.watch(cashierPermissionsProvider),
+      ref.watch(authControllerProvider).valueOrNull?.permissions,
+    );
+    return [
+      if (CashierPermissions.canViewReports(perms))
+        PosTap(
+          onTap: onReports,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Text(
+              'التقارير',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: HasimColors.brand,
+              ),
+            ),
+          ),
+        ),
+      if (CashierPermissions.canUseKitchen(perms))
+        PosTap(
+          onTap: onKitchen,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Text(
+              'المطبخ',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: HasimColors.brand,
+              ),
+            ),
+          ),
+        ),
+    ];
   }
 }
 
@@ -659,21 +738,22 @@ class _TopNav extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Match Web POS top-nav: reports always visible (auth happens on API).
+    final perms = CashierPermissions.resolve(
+      ref.watch(cashierPermissionsProvider),
+      ref.watch(authControllerProvider).valueOrNull?.permissions,
+    );
     final items = <(_PosSection, String)>[
       (_PosSection.cashier, 'الكاشير'),
-      (_PosSection.tables, 'الطاولات'),
+      if (CashierPermissions.canViewTables(perms))
+        (_PosSection.tables, 'الطاولات'),
       (_PosSection.menu, 'طلبات المنيو'),
       (_PosSection.orders, 'الطلبات'),
-      (_PosSection.invoices, 'الفواتير'),
-      (_PosSection.reports, 'التقارير'),
-      if (CashierPermissions.canManageMenu(
-        CashierPermissions.resolve(
-          ref.watch(cashierPermissionsProvider),
-          ref.watch(authControllerProvider).valueOrNull?.permissions,
-        ),
-      ))
+      if (CashierPermissions.canViewInvoices(perms))
+        (_PosSection.invoices, 'الفواتير'),
+      if (CashierPermissions.canManageMenu(perms))
         (_PosSection.items, 'إدارة الأصناف'),
+      if (CashierPermissions.canManageUsers(perms))
+        (_PosSection.users, 'المستخدمون'),
       (_PosSection.settings, 'الإعدادات'),
     ];
     final menuBadge = ref.watch(menuNewOrdersCountProvider);

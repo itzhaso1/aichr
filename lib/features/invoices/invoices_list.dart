@@ -7,7 +7,10 @@ import 'package:intl/intl.dart';
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/local_db_providers.dart';
+import '../../core/permissions/cashier_permissions.dart';
+import '../../core/permissions/permissions_provider.dart';
 import '../../core/printing/printer_service.dart';
+import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
@@ -31,6 +34,11 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Map<String, dynamic>? _selected;
   String? _workspaceName;
   StreamSubscription? _watchSub;
+
+  Map<String, dynamic> get _invoicePerms => CashierPermissions.resolve(
+        ref.read(cashierPermissionsProvider),
+        ref.read(authControllerProvider).valueOrNull?.permissions,
+      );
 
   @override
   void initState() {
@@ -167,6 +175,101 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     }
   }
 
+  Future<void> _editSelected() async {
+    final inv = _selected;
+    if (inv == null) return;
+    final localId = '${inv['local_id'] ?? ''}'.trim();
+    if (localId.isEmpty) return;
+    final notes = TextEditingController(text: '${inv['notes'] ?? ''}');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل الفاتورة'),
+        content: TextField(
+          controller: notes,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'ملاحظات'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = notes.text.trim();
+    notes.dispose();
+    if (ok != true) return;
+    try {
+      await ref.read(localFinanceRepositoryProvider).updateInvoice(
+            localId: localId,
+            notes: trimmed,
+            permissions: _invoicePerms,
+          );
+      await _openInvoice({'local_id': localId});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تعديل الفاتورة.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
+      );
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    final inv = _selected;
+    if (inv == null) return;
+    final localId = '${inv['local_id'] ?? ''}'.trim();
+    if (localId.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الفاتورة'),
+        content: Text(
+          'سيتم حذف الفاتورة ${inv['invoice_number'] ?? ''} نهائياً.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(localFinanceRepositoryProvider).deleteInvoice(
+            localId: localId,
+            permissions: _invoicePerms,
+          );
+      ref.read(invoicesRevisionProvider.notifier).state++;
+      if (!mounted) return;
+      setState(() => _selected = null);
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حذف الفاتورة.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<int?>(workspaceIdProvider, (prev, next) {
@@ -199,6 +302,12 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
         onBack: () => setState(() => _selected = null),
         onPrint: () => _printSelected(reprint: false),
         onReprint: () => _printSelected(reprint: true),
+        onEdit: CashierPermissions.canEditInvoices(_invoicePerms)
+            ? _editSelected
+            : null,
+        onDelete: CashierPermissions.canDeleteInvoices(_invoicePerms)
+            ? _deleteSelected
+            : null,
       );
     }
 
@@ -375,12 +484,16 @@ class _InvoiceDetail extends StatelessWidget {
     required this.onBack,
     required this.onPrint,
     required this.onReprint,
+    this.onEdit,
+    this.onDelete,
   });
 
   final Map<String, dynamic> invoice;
   final VoidCallback onBack;
   final VoidCallback onPrint;
   final VoidCallback onReprint;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -415,6 +528,13 @@ class _InvoiceDetail extends StatelessWidget {
           children: [
             OutlinedButton(onPressed: onPrint, child: const Text('طباعة')),
             OutlinedButton(onPressed: onReprint, child: const Text('إعادة')),
+            if (onEdit != null)
+              OutlinedButton(onPressed: onEdit, child: const Text('تعديل')),
+            if (onDelete != null)
+              OutlinedButton(
+                onPressed: onDelete,
+                child: const Text('حذف'),
+              ),
           ],
         ),
         const SizedBox(height: 8),
@@ -424,6 +544,9 @@ class _InvoiceDetail extends StatelessWidget {
         ),
         Text('الطاولة: ${nestedName(invoice['table'])}'),
         if (payment != null) Text('الدفع: $payment'),
+        if (invoice['notes'] != null &&
+            '${invoice['notes']}'.trim().isNotEmpty)
+          Text('ملاحظات: ${invoice['notes']}'),
         const Divider(),
         for (final item in items)
           Padding(

@@ -95,17 +95,17 @@ class _StandaloneSetupScreenState extends ConsumerState<StandaloneSetupScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _username,
+                      keyboardType: TextInputType.emailAddress,
                       decoration: const InputDecoration(
-                        labelText: 'اسم المستخدم',
+                        labelText: 'إيميل المدير',
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _pin,
                       obscureText: true,
-                      keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'PIN (4 أرقام على الأقل)',
+                        labelText: 'كلمة المرور (4 أحرف على الأقل)',
                       ),
                     ),
                     const SizedBox(height: 12),

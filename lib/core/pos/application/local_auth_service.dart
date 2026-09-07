@@ -1,10 +1,14 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../local_db/app_database.dart';
 import '../../local_db/workspace_scope.dart';
+import '../../permissions/staff_permissions.dart';
 import '../pos_errors.dart';
 import '../pos_mode.dart';
+import '../pos_permissions.dart';
 import 'pin_hasher.dart';
 
 class LocalAuthService {
@@ -14,51 +18,10 @@ class LocalAuthService {
   final AppDatabase _db;
   final String Function() _newId;
 
-  static const adminPermissions = {
-    'pos.use': true,
-    'pos.manage': true,
-    'orders.create': true,
-    'orders.manage': true,
-    'orders.discount': true,
-    'orders.refund': true,
-    'tables.manage': true,
-    'menu.manage': true,
-    'reports.view': true,
-    'shifts.open': true,
-    'shifts.close': true,
-    'shifts.manage': true,
-    'cash.movement': true,
-    'stock.adjust': true,
-    'workspace.manage': true,
-  };
+  static const adminPermissions = StaffPermissions.adminDefaults;
 
-  static Map<String, dynamic> permissionsFor(String role) {
-    switch (role) {
-      case 'admin':
-        return Map<String, dynamic>.from(adminPermissions);
-      case 'manager':
-        return {
-          ...adminPermissions,
-          'workspace.manage': false,
-          'pos.manage': false,
-        };
-      case 'chef':
-      case 'kitchen':
-        return {
-          'pos.use': true,
-          'kitchen.use': true,
-          'orders.manage': true,
-        };
-      case 'cashier':
-      default:
-        return {
-          'pos.use': true,
-          'orders.create': true,
-          'shifts.open': true,
-          'reports.view': true,
-        };
-    }
-  }
+  static Map<String, dynamic> permissionsFor(String role) =>
+      StaffPermissions.defaultsForRole(role);
 
   static bool isKitchenRole(String? role) {
     final value = (role ?? '').trim().toLowerCase();
@@ -151,13 +114,17 @@ class LocalAuthService {
     required String username,
     required String pin,
   }) async {
-    final user =
-        await (_db.select(_db.localUsers)..where(
-              (t) =>
-                  t.workspaceId.equals(workspaceId) &
-                  t.username.equals(username.trim().toLowerCase()),
-            ))
-            .getSingleOrNull();
+    final email = username.trim().toLowerCase();
+    final matches = await (_db.select(
+      _db.localUsers,
+    )..where((t) => t.workspaceId.equals(workspaceId))).get();
+    LocalUser? user;
+    for (final row in matches) {
+      if (row.username.toLowerCase() == email) {
+        user = row;
+        break;
+      }
+    }
     if (user == null) throw const InvalidPin();
     if (!user.isActive) throw const UserInactive();
     if (!PinHasher.verify(pin, user.pinSalt, user.pinHash)) {
@@ -167,7 +134,7 @@ class LocalAuthService {
       await _upgradePinHash(user, pin);
       return (await (_db.select(
         _db.localUsers,
-      )..where((t) => t.localId.equals(user.localId))).getSingle());
+      )..where((t) => t.localId.equals(user!.localId))).getSingle());
     }
     return user;
   }
@@ -198,7 +165,12 @@ class LocalAuthService {
     required String username,
     required String pin,
     String role = 'cashier',
+    Map<String, dynamic>? permissions,
+    Map<String, dynamic>? actorPermissions,
   }) async {
+    if (actorPermissions != null) {
+      PosPermissions.require(actorPermissions, PosPermissions.users);
+    }
     if (pin.trim().length < 4) throw const InvalidPin();
     final normalizedRole = switch (role.trim().toLowerCase()) {
       'chef' || 'kitchen' => 'chef',
@@ -206,15 +178,19 @@ class LocalAuthService {
       'manager' => 'manager',
       _ => 'cashier',
     };
+    final email = username.trim().toLowerCase();
+    if (email.isEmpty) {
+      throw const DatabaseFailure('الإيميل مطلوب.');
+    }
     final existing =
         await (_db.select(_db.localUsers)..where(
               (t) =>
                   t.workspaceId.equals(workspaceId) &
-                  t.username.equals(username.trim().toLowerCase()),
+                  t.username.equals(email),
             ))
             .getSingleOrNull();
     if (existing != null) {
-      throw const DatabaseFailure('اسم المستخدم موجود مسبقاً.');
+      throw const DatabaseFailure('الإيميل موجود مسبقاً.');
     }
     final id = _newId();
     final salt = PinHasher.newSalt();
@@ -226,7 +202,7 @@ class LocalAuthService {
             localId: id,
             workspaceId: workspaceId,
             name: name.trim(),
-            username: username.trim().toLowerCase(),
+            username: email,
             pinSalt: salt,
             pinHash: hashPin(pin, salt),
             role: Value(normalizedRole),
@@ -234,7 +210,78 @@ class LocalAuthService {
             updatedAt: now,
           ),
         );
+    if (permissions != null) {
+      await writeUserAcl(
+        workspaceId: workspaceId,
+        userLocalId: id,
+        permissions: permissions,
+      );
+    }
     return id;
+  }
+
+  static String aclKey(String userLocalId) => 'staff_acl.$userLocalId';
+
+  Future<Map<String, dynamic>> readUserAcl({
+    required int workspaceId,
+    required String userLocalId,
+  }) async {
+    final row = await (_db.select(_db.localSettings)..where(
+          (t) =>
+              t.workspaceId.equals(workspaceId) &
+              t.key.equals(aclKey(userLocalId)),
+        ))
+        .getSingleOrNull();
+    if (row == null || row.valueJson.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(row.valueJson);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return const {};
+  }
+
+  Future<void> writeUserAcl({
+    required int workspaceId,
+    required String userLocalId,
+    required Map<String, dynamic> permissions,
+    Map<String, dynamic>? actorPermissions,
+  }) async {
+    if (actorPermissions != null) {
+      PosPermissions.require(actorPermissions, PosPermissions.users);
+    }
+    await _db.into(_db.localSettings).insertOnConflictUpdate(
+          LocalSettingsCompanion.insert(
+            key: aclKey(userLocalId),
+            workspaceId: workspaceId,
+            valueJson: jsonEncode(permissions),
+            updatedAt: DateTime.now(),
+          ),
+        );
+  }
+
+  Future<Map<String, dynamic>> effectivePermissions(LocalUser user) async {
+    final stored = await readUserAcl(
+      workspaceId: user.workspaceId,
+      userLocalId: user.localId,
+    );
+    return StaffPermissions.merge(role: user.role, stored: stored);
+  }
+
+  Future<void> updateUserPassword({
+    required String userLocalId,
+    required String pin,
+  }) async {
+    if (pin.trim().length < 4) throw const InvalidPin();
+    final salt = PinHasher.newSalt();
+    await (_db.update(
+      _db.localUsers,
+    )..where((t) => t.localId.equals(userLocalId))).write(
+      LocalUsersCompanion(
+        pinSalt: Value(salt),
+        pinHash: Value(PinHasher.hash(pin, salt)),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
   }
 
   Future<void> updateStore({

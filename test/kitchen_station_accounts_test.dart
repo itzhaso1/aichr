@@ -8,14 +8,20 @@ import 'package:hasim_cashier/core/api/cashier_api.dart';
 import 'package:hasim_cashier/core/auth/auth_controller.dart';
 import 'package:hasim_cashier/core/local_db/app_database.dart';
 import 'package:hasim_cashier/core/local_db/local_db_providers.dart';
+import 'package:hasim_cashier/core/pos/application/catalog_admin_service.dart';
 import 'package:hasim_cashier/core/pos/application/kitchen_local_service.dart';
 import 'package:hasim_cashier/core/pos/application/local_auth_service.dart';
+import 'package:hasim_cashier/core/pos/pos_errors.dart';
 import 'package:hasim_cashier/core/pos/pos_mode.dart';
+import 'package:hasim_cashier/core/repositories/local_finance_repository.dart';
 import 'package:hasim_cashier/core/repositories/orders_repository.dart';
 import 'package:hasim_cashier/core/repositories/sync_queue_repository.dart';
+import 'package:hasim_cashier/core/permissions/permissions_provider.dart';
 import 'package:hasim_cashier/features/auth/login_screen.dart';
 import 'package:hasim_cashier/features/kitchen/kitchen_board.dart';
 import 'package:hasim_cashier/features/orders/orders_list.dart';
+import 'package:hasim_cashier/features/reports/daily_reports_panel.dart';
+import 'package:hasim_cashier/features/reports/reports_station_screen.dart';
 
 void main() {
   late AppDatabase db;
@@ -75,8 +81,107 @@ void main() {
     expect(LocalAuthService.isKitchenRole(chef.role), isTrue);
     expect(LocalAuthService.roleLabelAr(chef.role), 'شيف');
     expect(LocalAuthService.permissionsFor('chef')['kitchen.use'], isTrue);
+    expect(LocalAuthService.permissionsFor('chef')['pos.use'], isNot(true));
     expect(LocalAuthService.permissionsFor('chef')['tables.manage'], isNot(true));
     expect(LocalAuthService.permissionsFor('cashier')['kitchen.use'], isNot(true));
+    expect(LocalAuthService.permissionsFor('cashier')['invoices.delete'], isNot(true));
+    expect(LocalAuthService.permissionsFor('cashier')['tables.create'], isNot(true));
+    expect(LocalAuthService.permissionsFor('cashier')['reports.view'], isNot(true));
+  });
+
+  test('per-user ACL overlays role defaults and is enforced in services', () async {
+    final auth = LocalAuthService(db);
+    await auth.bootstrapStore(
+      storeName: 'متجر',
+      adminName: 'مدير',
+      username: 'admin@store.local',
+      pin: '1234',
+    );
+    final cashierId = await auth.createUser(
+      workspaceId: ws,
+      name: 'كاشير أحمد',
+      username: 'cashier@store.local',
+      pin: '2222',
+      role: 'cashier',
+    );
+    await auth.writeUserAcl(
+      workspaceId: ws,
+      userLocalId: cashierId,
+      permissions: {
+        'invoices.delete': true,
+        'reports.view': true,
+      },
+    );
+    final cashier = await auth.login(
+      workspaceId: ws,
+      username: 'CASHIER@store.local',
+      pin: '2222',
+    );
+    final effective = await auth.effectivePermissions(cashier);
+    expect(effective['invoices.delete'], isTrue);
+    expect(effective['reports.view'], isTrue);
+    expect(effective['pos.use'], isTrue);
+    expect(effective['tables.create'], isNot(true));
+
+    final catalog = CatalogAdminService(db);
+    expect(
+      () => catalog.createTable(
+        workspaceId: ws,
+        name: 'طاولة ممنوعة',
+        permissions: effective,
+      ),
+      throwsA(isA<Forbidden>()),
+    );
+    await catalog.createTable(
+      workspaceId: ws,
+      name: 'طاولة المدير',
+      permissions: LocalAuthService.adminPermissions,
+    );
+
+    final finance = LocalFinanceRepository(db);
+    expect(
+      () => finance.deleteInvoice(
+        localId: 'missing',
+        permissions: LocalAuthService.permissionsFor('cashier'),
+      ),
+      throwsA(isA<Forbidden>()),
+    );
+    expect(
+      () => finance.updateInvoice(
+        localId: 'missing',
+        notes: 'x',
+        permissions: LocalAuthService.permissionsFor('cashier'),
+      ),
+      throwsA(isA<Forbidden>()),
+    );
+  });
+
+  test('chef landing is kitchen; cashier landing is home', () {
+    final chef = AuthSession(
+      token: 'standalone:chef',
+      user: {'name': 'سامي', 'role': 'chef'},
+      workspaces: [],
+      permissions: LocalAuthService.permissionsFor('chef'),
+      isLocalMode: true,
+    );
+    final cashier = AuthSession(
+      token: 'standalone:cash',
+      user: {'name': 'أحمد', 'role': 'cashier'},
+      workspaces: [],
+      permissions: LocalAuthService.permissionsFor('cashier'),
+      isLocalMode: true,
+    );
+    final reportsOnly = AuthSession(
+      token: 'standalone:rep',
+      user: {'name': 'تقارير', 'role': 'cashier'},
+      workspaces: [],
+      permissions: const {'reports.view': true},
+      isLocalMode: true,
+    );
+    expect(chef.landingRoute, '/kitchen');
+    expect(chef.canUsePos, isFalse);
+    expect(cashier.landingRoute, '/home');
+    expect(reportsOnly.landingRoute, '/reports');
   });
 
   test('kitchen watch includes table name without a cashier session', () async {
@@ -206,7 +311,7 @@ void main() {
     expect(cashier.isKitchenSession, isFalse);
   });
 
-  testWidgets('login shows cashier and kitchen entries when a store exists',
+  testWidgets('login requires email and password and has no kitchen kiosk',
       (tester) async {
     await seedStore();
     final router = GoRouter(
@@ -245,12 +350,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('setup-screen'), findsNothing);
-    expect(find.text('دخول الكاشير'), findsOneWidget);
-    expect(find.text('دخول المطبخ'), findsOneWidget);
-
-    await tester.tap(find.text('دخول المطبخ'));
-    await tester.pumpAndSettle();
-    expect(find.text('kitchen-station'), findsOneWidget);
+    expect(find.text('الإيميل'), findsOneWidget);
+    expect(find.text('كلمة المرور'), findsOneWidget);
+    expect(find.text('دخول'), findsOneWidget);
+    expect(find.text('دخول المطبخ'), findsNothing);
+    expect(find.text('kitchen-station'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });
@@ -319,8 +423,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   });
 
-  testWidgets('kitchen board loads tickets without a cashier session',
+  testWidgets('kitchen board places two colored tickets side by side',
       (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await seedStore();
     final now = DateTime.now();
     await db.into(db.localTables).insert(
@@ -357,6 +466,19 @@ void main() {
             updatedAt: now,
           ),
         );
+    await db.into(db.localOrders).insert(
+          LocalOrdersCompanion.insert(
+            localId: 'ord-k2',
+            workspaceId: ws,
+            deviceId: 'dev-1',
+            clientReference: 'ord-k2',
+            orderNumber: const Value('K-2'),
+            orderType: 'takeaway',
+            posStatus: const Value('accepted'),
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
 
     await tester.pumpWidget(
       ProviderScope(
@@ -378,7 +500,86 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('طاولة 9'), findsOneWidget);
     expect(find.textContaining('شاي'), findsOneWidget);
+    expect(find.text('جديد'), findsWidgets);
+    expect(find.text('مقبول'), findsWidgets);
+    expect(find.byKey(const ValueKey('kitchen-row-0')), findsOneWidget);
+    final row = tester.widget<Row>(find.byKey(const ValueKey('kitchen-row-0')));
+    expect(row.children.whereType<Expanded>().length, 2);
     expect(find.text('الكاشير'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  });
+
+  testWidgets('reports station requires login', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('ar'),
+          supportedLocales: [Locale('ar'), Locale('en')],
+          localizationsDelegates: [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: ReportsStationScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('التقارير'), findsWidgets);
+    expect(find.text('غير مصرح بعرض التقارير'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  });
+
+  testWidgets('daily reports panel renders local data', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await seedStore();
+    final now = DateTime.now();
+    await db.into(db.localInvoices).insert(
+          LocalInvoicesCompanion.insert(
+            localId: 'inv-r',
+            workspaceId: ws,
+            deviceId: 'dev-1',
+            invoiceNumber: const Value('INV-R-1'),
+            localInvoiceNumber: const Value('INV-R-1'),
+            totalAmount: const Value(1500),
+            createdAt: now,
+          ),
+        );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) => db),
+          workspaceIdProvider.overrideWith((ref) => ws),
+          cashierPermissionsProvider.overrideWith(
+            (ref) => Map<String, dynamic>.from(
+              LocalAuthService.adminPermissions,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          locale: Locale('ar'),
+          supportedLocales: [Locale('ar'), Locale('en')],
+          localizationsDelegates: [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: Scaffold(body: DailyReportsPanel()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('التقارير اليومية'), findsOneWidget);
+    expect(find.textContaining('INV-R-1'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });

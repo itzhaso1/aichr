@@ -38,6 +38,11 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   PollingPosEventSource? _source;
   StreamSubscription<List<Map<String, dynamic>>>? _watchSub;
 
+  Map<String, dynamic> get _perms => CashierPermissions.resolve(
+        ref.read(cashierPermissionsProvider),
+        ref.read(authControllerProvider).valueOrNull?.permissions,
+      );
+
   @override
   void initState() {
     super.initState();
@@ -166,6 +171,12 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   }
 
   Future<void> _addTable() async {
+    if (!CashierPermissions.canCreateTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية إضافة طاولات.')),
+      );
+      return;
+    }
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -222,6 +233,146 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
         SnackBar(content: Text('تعذر إضافة الطاولة: $message')),
       );
     }
+  }
+
+  Future<void> _renameTable(Map<String, dynamic> table) async {
+    if (!CashierPermissions.canEditTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية تعديل الطاولات.')),
+      );
+      return;
+    }
+    final workspaceId = ref.read(workspaceIdProvider);
+    final localId = '${table['local_id'] ?? ''}'.trim();
+    if (workspaceId == null || localId.isEmpty) return;
+    final name = TextEditingController(text: '${table['name'] ?? ''}');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل الطاولة'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'اسم / رقم الطاولة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = name.text.trim();
+    name.dispose();
+    if (ok != true || trimmed.isEmpty) return;
+    try {
+      await ref.read(catalogAdminServiceProvider).updateTable(
+            workspaceId: workspaceId,
+            localId: localId,
+            name: trimmed,
+            permissions: _perms,
+          );
+      ref.invalidate(localTablesProvider);
+      ref.read(tablesRevisionProvider.notifier).state++;
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
+      );
+    }
+  }
+
+  Future<void> _deleteTable(Map<String, dynamic> table) async {
+    if (!CashierPermissions.canDeleteTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية حذف الطاولات.')),
+      );
+      return;
+    }
+    final workspaceId = ref.read(workspaceIdProvider);
+    final localId = '${table['local_id'] ?? ''}'.trim();
+    if (workspaceId == null || localId.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الطاولة'),
+        content: Text('سيتم حذف «${table['name'] ?? ''}».'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(catalogAdminServiceProvider).deleteTable(
+            workspaceId: workspaceId,
+            localId: localId,
+            permissions: _perms,
+          );
+      ref.invalidate(localTablesProvider);
+      ref.read(tablesRevisionProvider.notifier).state++;
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
+      );
+    }
+  }
+
+  Future<void> _manageTables() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('إدارة الطاولات')),
+            for (final table in _tables)
+              ListTile(
+                title: Text('${table['name']}'),
+                subtitle: Text(PosLabels.tableStatus(table['status']?.toString())),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (CashierPermissions.canEditTables(_perms))
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          unawaited(_renameTable(table));
+                        },
+                      ),
+                    if (CashierPermissions.canDeleteTables(_perms))
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          unawaited(_deleteTable(table));
+                        },
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -294,26 +445,42 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      PosTap(
-                        onTap: _addTable,
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.add, color: HasimColors.brand),
-                              SizedBox(width: 4),
-                              Text(
-                                'إضافة طاولة',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  color: HasimColors.brand,
+                      if (CashierPermissions.canCreateTables(_perms))
+                        PosTap(
+                          onTap: _addTable,
+                          child: const Padding(
+                            padding: EdgeInsets.all(8),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add, color: HasimColors.brand),
+                                SizedBox(width: 4),
+                                Text(
+                                  'إضافة طاولة',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: HasimColors.brand,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
+                      if (CashierPermissions.canEditTables(_perms) ||
+                          CashierPermissions.canDeleteTables(_perms))
+                        PosTap(
+                          onTap: _manageTables,
+                          child: const Padding(
+                            padding: EdgeInsets.all(8),
+                            child: Text(
+                              'إدارة',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: HasimColors.ink,
+                              ),
+                            ),
+                          ),
+                        ),
                       PosTap(
                         onTap: _load,
                         child: const Padding(
@@ -334,9 +501,15 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   padding: const EdgeInsets.all(16),
                   child: HsEmpty(
                     title: 'لا توجد طاولات بعد.',
-                    subtitle: 'أضف طاولة من هنا أو من الإعدادات ثم اضغط حفظ.',
-                    actionLabel: 'إضافة طاولة',
-                    onAction: _addTable,
+                    subtitle: CashierPermissions.canCreateTables(_perms)
+                        ? 'أضف طاولة من هنا أو من الإعدادات ثم اضغط حفظ.'
+                        : 'اطلب من المدير إضافة الطاولات.',
+                    actionLabel: CashierPermissions.canCreateTables(_perms)
+                        ? 'إضافة طاولة'
+                        : null,
+                    onAction: CashierPermissions.canCreateTables(_perms)
+                        ? _addTable
+                        : null,
                   ),
                 )
               : LayoutBuilder(

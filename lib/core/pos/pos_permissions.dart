@@ -1,55 +1,83 @@
 import 'pos_errors.dart';
+import '../permissions/staff_permissions.dart';
 
 /// Business-layer permission keys. UI hiding is never sufficient.
 class PosPermissions {
   const PosPermissions._();
 
-  static const pay = 'orders.create';
-  static const discount = 'orders.discount';
-  static const refund = 'orders.refund';
-  static const catalog = 'menu.manage';
-  static const tables = 'tables.manage';
-  static const shiftOpen = 'shifts.open';
-  static const shiftClose = 'shifts.close';
-  static const shiftManage = 'shifts.manage';
-  static const cashMovement = 'cash.movement';
-  static const stockAdjust = 'stock.adjust';
-  static const backup = 'workspace.manage';
+  static const pay = StaffPermissions.ordersCreate;
+  static const discount = StaffPermissions.ordersDiscount;
+  static const refund = StaffPermissions.ordersRefund;
+  static const catalog = StaffPermissions.menuManage;
+  static const tables = StaffPermissions.tablesManage;
+  static const tablesCreate = StaffPermissions.tablesCreate;
+  static const tablesEdit = StaffPermissions.tablesEdit;
+  static const tablesDelete = StaffPermissions.tablesDelete;
+  static const invoicesView = StaffPermissions.invoicesView;
+  static const invoicesCreate = StaffPermissions.invoicesCreate;
+  static const invoicesEdit = StaffPermissions.invoicesEdit;
+  static const invoicesDelete = StaffPermissions.invoicesDelete;
+  static const kitchen = StaffPermissions.kitchenUse;
+  static const reports = StaffPermissions.reportsView;
+  static const users = StaffPermissions.usersManage;
+  static const shiftOpen = StaffPermissions.shiftsOpen;
+  static const shiftClose = StaffPermissions.shiftsClose;
+  static const shiftManage = StaffPermissions.shiftsManage;
+  static const cashMovement = StaffPermissions.cashMovement;
+  static const stockAdjust = StaffPermissions.stockAdjust;
+  static const backup = StaffPermissions.workspaceManage;
 
   static bool allows(Map<String, dynamic>? permissions, String key) {
+    if (StaffPermissions.can(permissions, key)) return true;
     if (permissions == null || permissions.isEmpty) return false;
-    if (_truthy(permissions[key])) return true;
     if (key == pay) {
-      return _truthy(permissions['orders.manage']) ||
-          _truthy(permissions['pos.use']);
+      return StaffPermissions.can(permissions, StaffPermissions.ordersManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posUse) ||
+          StaffPermissions.can(permissions, StaffPermissions.invoicesCreate);
     }
     if (key == discount) {
-      return _truthy(permissions['orders.manage']) ||
-          _truthy(permissions['pos.manage']);
+      return StaffPermissions.can(permissions, StaffPermissions.ordersManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posManage);
     }
     if (key == refund) {
-      return _truthy(permissions['orders.manage']) ||
-          _truthy(permissions['pos.manage']);
+      return StaffPermissions.can(permissions, StaffPermissions.ordersManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posManage);
     }
     if (key == catalog) {
-      return _truthy(permissions['workspace.manage']);
+      return false;
     }
-    if (key == tables) {
-      return _truthy(permissions['menu.manage']) ||
-          _truthy(permissions['workspace.manage']) ||
-          _truthy(permissions['pos.manage']);
+    if (key == tables ||
+        key == tablesCreate ||
+        key == tablesEdit ||
+        key == tablesDelete) {
+      return StaffPermissions.can(permissions, StaffPermissions.tablesManage);
+    }
+    if (key == invoicesEdit || key == invoicesDelete) {
+      return false;
+    }
+    if (key == invoicesView) {
+      return StaffPermissions.can(permissions, StaffPermissions.posUse);
+    }
+    if (key == invoicesCreate) {
+      return StaffPermissions.can(permissions, StaffPermissions.ordersCreate);
     }
     if (key == shiftOpen || key == shiftClose) {
-      return _truthy(permissions[shiftManage]) ||
-          _truthy(permissions['pos.manage']);
+      return StaffPermissions.can(permissions, shiftManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posManage);
     }
     if (key == cashMovement) {
-      return _truthy(permissions[shiftManage]) ||
-          _truthy(permissions['pos.manage']);
+      return StaffPermissions.can(permissions, shiftManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posManage);
     }
     if (key == stockAdjust) {
-      return _truthy(permissions[catalog]) ||
-          _truthy(permissions['workspace.manage']);
+      return StaffPermissions.can(permissions, catalog);
+    }
+    if (key == kitchen) {
+      return StaffPermissions.can(permissions, StaffPermissions.ordersManage) ||
+          StaffPermissions.can(permissions, StaffPermissions.posUse);
+    }
+    if (key == reports) {
+      return false;
     }
     return false;
   }
@@ -59,7 +87,4 @@ class PosPermissions {
       throw const Forbidden();
     }
   }
-
-  static bool _truthy(Object? value) =>
-      value == true || value == 1 || value == '1' || value == 'true';
 }

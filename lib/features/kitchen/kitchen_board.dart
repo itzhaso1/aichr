@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/cashier_api.dart';
+import '../../core/auth/auth_controller.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_labels.dart';
 import '../../core/theme/hasim_colors.dart';
@@ -96,12 +97,11 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
     final workspaceId = _workspaceId ?? ref.read(workspaceIdProvider);
     if (workspaceId == null) return;
     try {
-      await ref
-          .read(kitchenLocalServiceProvider)
-          .updateStatus(
+      await ref.read(kitchenLocalServiceProvider).updateStatus(
             workspaceId: workspaceId,
             orderLocalId: localId,
             status: status,
+            permissions: ref.read(authControllerProvider).valueOrNull?.permissions,
           );
     } catch (e) {
       if (!mounted) return;
@@ -163,129 +163,23 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                   onRefresh: _bind,
                   child: ListView.separated(
                     padding: const EdgeInsets.all(12),
-                    itemCount: _orders.length,
+                    itemCount: (_orders.length / 2).ceil(),
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final order = _orders[index];
-                      final current = order['pos_status'] as String? ?? 'new';
-                      final items = order['items'] is List
-                          ? (order['items'] as List).whereType<Map>()
-                          : const Iterable<Map>.empty();
-                      return HsCard(
-                        key: ValueKey('kitchen-${order['local_id']}'),
-                        color: HasimColors.surfaceSoft,
-                        child: Column(
+                    itemBuilder: (context, row) {
+                      final left = _orders[row * 2];
+                      final rightIndex = row * 2 + 1;
+                      final hasRight = rightIndex < _orders.length;
+                      return IntrinsicHeight(
+                        child: Row(
+                          key: ValueKey('kitchen-row-$row'),
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _ticketTitle(order),
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${orderDisplayLabel(order)} · ${PosLabels.orderType(order['order_type']?.toString())}',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: HasimColors.muted,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                HsBadge(
-                                  label: PosLabels.status(current),
-                                  background: HasimColors.ctaSoft,
-                                  foreground: HasimColors.ctaDark,
-                                ),
-                              ],
-                            ),
-                            if (items.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              for (final item in items)
-                                Text(
-                                  '• ${item['quantity']} × ${catalogItemName(item)}'
-                                  '${item['notes'] != null && '${item['notes']}'.trim().isNotEmpty ? ' (${item['notes']})' : ''}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                            ],
-                            if (order['notes'] != null &&
-                                (order['notes'] as String).isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(
-                                    HasimRadius.sm,
-                                  ),
-                                ),
-                                child: Text(
-                                  'ملاحظات: ${order['notes']}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(
-                                        color: HasimColors.border,
-                                      ),
-                                      borderRadius: BorderRadius.circular(
-                                        HasimRadius.sm,
-                                      ),
-                                    ),
-                                    child: DropdownButtonHideUnderline(
-                                      child: DropdownButton<String>(
-                                        isExpanded: true,
-                                        value: _statusOptions.contains(current)
-                                            ? current
-                                            : 'new',
-                                        items: [
-                                          for (final s in _statusOptions)
-                                            DropdownMenuItem(
-                                              value: s,
-                                              child: Text(
-                                                PosLabels.status(s),
-                                                style: const TextStyle(
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                        onChanged: (v) {
-                                          final localId =
-                                              order['local_id'] as String? ??
-                                              order['id']?.toString();
-                                          if (v != null &&
-                                              localId != null &&
-                                              localId.isNotEmpty) {
-                                            unawaited(
-                                              _updateStatus(localId, v),
-                                            );
-                                          }
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                            Expanded(child: _ticketCard(left)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: hasRight
+                                  ? _ticketCard(_orders[rightIndex])
+                                  : const SizedBox.shrink(),
                             ),
                           ],
                         ),
@@ -295,6 +189,113 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _ticketCard(Map<String, dynamic> order) {
+    final current = order['pos_status'] as String? ?? 'new';
+    final items = order['items'] is List
+        ? (order['items'] as List).whereType<Map>()
+        : const Iterable<Map>.empty();
+    return HsCard(
+      key: ValueKey('kitchen-${order['local_id']}'),
+      color: PosLabels.statusSoft(current),
+      borderColor: PosLabels.statusColor(current),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _ticketTitle(order),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      '${orderDisplayLabel(order)} · ${PosLabels.orderType(order['order_type']?.toString())}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: HasimColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              HsBadge(
+                label: PosLabels.status(current),
+                background: PosLabels.statusSoft(current),
+                foreground: PosLabels.statusColor(current),
+              ),
+            ],
+          ),
+          if (items.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final item in items)
+              Text(
+                '• ${item['quantity']} × ${catalogItemName(item)}'
+                '${item['notes'] != null && '${item['notes']}'.trim().isNotEmpty ? ' (${item['notes']})' : ''}',
+                style: const TextStyle(fontSize: 12),
+              ),
+          ],
+          if (order['notes'] != null &&
+              '${order['notes']}'.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(HasimRadius.sm),
+              ),
+              child: Text(
+                'ملاحظات: ${order['notes']}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: HasimColors.border),
+              borderRadius: BorderRadius.circular(HasimRadius.sm),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _statusOptions.contains(current) ? current : 'new',
+                items: [
+                  for (final s in _statusOptions)
+                    DropdownMenuItem(
+                      value: s,
+                      child: Text(
+                        PosLabels.status(s),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: PosLabels.statusColor(s),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
+                onChanged: (v) {
+                  final localId =
+                      order['local_id'] as String? ?? order['id']?.toString();
+                  if (v != null && localId != null && localId.isNotEmpty) {
+                    unawaited(_updateStatus(localId, v));
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

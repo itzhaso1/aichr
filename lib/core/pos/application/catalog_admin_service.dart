@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../local_db/app_database.dart';
 import '../../local_db/local_ids.dart';
 import '../domain/pricing_service.dart';
+import '../pos_errors.dart';
 import '../pos_permissions.dart';
 
 class CatalogAdminService {
@@ -182,7 +183,7 @@ class CatalogAdminService {
     String? number,
     Map<String, dynamic>? permissions,
   }) async {
-    PosPermissions.require(permissions, PosPermissions.tables);
+    PosPermissions.require(permissions, PosPermissions.tablesCreate);
     final trimmed = name.trim();
     final existing = await (_db.select(_db.localTables)
           ..where((t) => t.workspaceId.equals(workspaceId)))
@@ -214,5 +215,67 @@ class CatalogAdminService {
           ),
         );
     return localId;
+  }
+
+  Future<void> updateTable({
+    required int workspaceId,
+    required String localId,
+    required String name,
+    Map<String, dynamic>? permissions,
+  }) async {
+    PosPermissions.require(permissions, PosPermissions.tablesEdit);
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final row = await (_db.select(_db.localTables)..where(
+          (t) => t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+        ))
+        .getSingleOrNull();
+    if (row == null) return;
+    Map<String, dynamic> payload = const {};
+    try {
+      final decoded = jsonDecode(row.payloadJson);
+      if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    payload['name'] = trimmed;
+    await (_db.update(_db.localTables)..where(
+          (t) => t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+        ))
+        .write(
+          LocalTablesCompanion(
+            name: Value(trimmed),
+            tableNumber: Value(trimmed),
+            payloadJson: Value(jsonEncode(payload)),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+  }
+
+  Future<void> deleteTable({
+    required int workspaceId,
+    required String localId,
+    Map<String, dynamic>? permissions,
+  }) async {
+    PosPermissions.require(permissions, PosPermissions.tablesDelete);
+    final openSessions = await (_db.select(_db.localSessions)..where(
+          (t) =>
+              t.tableLocalId.equals(localId) &
+              t.workspaceId.equals(workspaceId) &
+              t.status.equals('open'),
+        ))
+        .get();
+    if (openSessions.isNotEmpty) {
+      throw const DatabaseFailure(
+        'لا يمكن حذف طاولة عليها جلسة مفتوحة. أغلق الطاولة أولاً.',
+      );
+    }
+    await (_db.delete(_db.localSessions)..where(
+          (t) =>
+              t.tableLocalId.equals(localId) & t.workspaceId.equals(workspaceId),
+        ))
+        .go();
+    await (_db.delete(_db.localTables)..where(
+          (t) => t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+        ))
+        .go();
   }
 }

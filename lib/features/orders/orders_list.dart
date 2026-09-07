@@ -141,6 +141,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
               workspaceId: workspaceId,
               orderLocalId: localId,
               status: status,
+              permissions: session?.permissions,
             );
         await _load();
       } catch (e) {

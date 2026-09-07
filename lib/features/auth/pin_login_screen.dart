@@ -52,7 +52,7 @@ class _PinLoginScreenState extends ConsumerState<PinLoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('دخول الكاشير'),
+        title: const Text('تسجيل الدخول'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/login'),
@@ -70,23 +70,26 @@ class _PinLoginScreenState extends ConsumerState<PinLoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Text(
-                      'حساب الكاشير أو المدير. حساب الشيف يفتح المطبخ فقط.',
+                      'أدخل الإيميل وكلمة المرور. الشيف يُفتح على المطبخ، والكاشير على نقطة البيع.',
                       style: TextStyle(color: HasimColors.muted),
                     ),
                     const SizedBox(height: 16),
                     TextField(
                       controller: _username,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
                       decoration: const InputDecoration(
-                        labelText: 'اسم المستخدم',
+                        labelText: 'الإيميل',
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _pin,
                       obscureText: true,
-                      keyboardType: TextInputType.number,
                       onSubmitted: (_) => _busy ? null : _submit(),
-                      decoration: const InputDecoration(labelText: 'PIN'),
+                      decoration: const InputDecoration(
+                        labelText: 'كلمة المرور',
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),

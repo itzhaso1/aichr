@@ -8,6 +8,7 @@ import '../../core/local_db/local_db_providers.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
+import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
@@ -58,11 +59,33 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     });
 
     final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId == null || workspaceId <= 0) {
+    var resolvedWorkspace = workspaceId;
+    if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      resolvedWorkspace = store?.workspaceId;
+      if (resolvedWorkspace != null && mounted) {
+        ref.read(workspaceIdProvider.notifier).state = resolvedWorkspace;
+      }
+    }
+    if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'لا توجد مساحة عمل محلية.';
+      });
+      return;
+    }
+
+    final perms = CashierPermissions.resolve(
+      ref.read(cashierPermissionsProvider),
+      ref.read(authControllerProvider).valueOrNull?.permissions,
+    );
+    if (!CashierPermissions.canViewReports(perms)) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _forbidden = true;
+        _error = null;
       });
       return;
     }
@@ -72,12 +95,18 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       try {
         local = await ref
             .read(localReportsServiceProvider)
-            .daily(workspaceId: workspaceId, date: _date)
+            .daily(
+              workspaceId: resolvedWorkspace,
+              date: _date,
+              permissions: perms,
+            )
             .timeout(const Duration(seconds: 5));
+      } on Forbidden {
+        rethrow;
       } catch (_) {
         local = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .buildDailyReport(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
       }
       final summary = asStringKeyedMap(local['summary']);
@@ -85,7 +114,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       if (invoiceRows.isEmpty && asIntOr(summary['invoices_count']) == 0) {
         final fromFinance = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .buildDailyReport(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
         final financeSummary = asStringKeyedMap(fromFinance['summary']);
         if (asMapList(fromFinance['invoices']).isNotEmpty ||
@@ -105,8 +134,8 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _forbidden = false;
-        _error = 'تعذر تحميل التقرير المحلي: $e';
+        _forbidden = e is Forbidden;
+        _error = e is Forbidden ? null : 'تعذر تحميل التقرير المحلي: $e';
       });
     }
   }
@@ -139,8 +168,9 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       }
     });
 
+    Widget body;
     if (_loading && _data == null) {
-      return const Center(
+      body = const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -153,20 +183,16 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           ],
         ),
       );
-    }
-
-    if (_forbidden) {
-      return const Padding(
+    } else if (_forbidden) {
+      body = const Padding(
         padding: EdgeInsets.all(16),
         child: HsEmpty(
           title: 'غير مصرح بعرض التقارير',
           subtitle: 'لا تملك صلاحية reports.view. تواصل مع مدير مساحة العمل.',
         ),
       );
-    }
-
-    if (_error != null) {
-      return Padding(
+    } else if (_error != null) {
+      body = Padding(
         padding: const EdgeInsets.all(16),
         child: HsEmpty(
           title: 'تعذر تحميل التقرير',
@@ -175,10 +201,8 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           onAction: _load,
         ),
       );
-    }
-
-    if (_data == null) {
-      return Padding(
+    } else if (_data == null) {
+      body = Padding(
         padding: const EdgeInsets.all(16),
         child: HsEmpty(
           title: 'لا توجد بيانات للعرض',
@@ -187,21 +211,23 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           onAction: _load,
         ),
       );
+    } else {
+      try {
+        body = _buildReportBody();
+      } catch (e) {
+        body = Padding(
+          padding: const EdgeInsets.all(16),
+          child: HsEmpty(
+            title: 'تعذر عرض التقرير',
+            subtitle: e.toString(),
+            actionLabel: 'إعادة المحاولة',
+            onAction: _load,
+          ),
+        );
+      }
     }
 
-    try {
-      return _buildReportBody();
-    } catch (e) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: HsEmpty(
-          title: 'تعذر عرض التقرير',
-          subtitle: e.toString(),
-          actionLabel: 'إعادة المحاولة',
-          onAction: _load,
-        ),
-      );
-    }
+    return ColoredBox(color: HasimColors.page, child: body);
   }
 
   Widget _buildReportBody() {
@@ -509,9 +535,11 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
 
     return LayoutBuilder(
       builder: (context, c) {
-        final maxW = c.maxWidth.isFinite
-            ? c.maxWidth
-            : MediaQuery.sizeOf(context).width;
+        var maxW = c.maxWidth;
+        if (!maxW.isFinite || maxW <= 0) {
+          maxW = MediaQuery.sizeOf(context).width - 32;
+        }
+        if (!maxW.isFinite || maxW <= 0) maxW = 360;
         final cols = maxW >= 900
             ? 4
             : maxW >= 520
