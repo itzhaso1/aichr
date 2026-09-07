@@ -39,9 +39,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   StreamSubscription<List<Map<String, dynamic>>>? _watchSub;
 
   Map<String, dynamic> get _perms => CashierPermissions.resolve(
-        ref.read(cashierPermissionsProvider),
-        ref.read(authControllerProvider).valueOrNull?.permissions,
-      );
+    ref.read(cashierPermissionsProvider),
+    ref.read(authControllerProvider).valueOrNull?.permissions,
+  );
 
   @override
   void initState() {
@@ -65,20 +65,20 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     _watchSub?.cancel();
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) return;
-    _watchSub = ref.read(tablesRepositoryProvider).watchBoard(workspaceId).listen(
-      (tables) {
-        if (!mounted) return;
-        setState(() {
-          _tables = tables;
-          _loading = false;
-          _error = tables.isEmpty
-              ? (AppConfig.offlineOnly
+    _watchSub = ref.read(tablesRepositoryProvider).watchBoard(workspaceId).listen((
+      tables,
+    ) {
+      if (!mounted) return;
+      setState(() {
+        _tables = tables;
+        _loading = false;
+        _error = tables.isEmpty
+            ? (AppConfig.offlineOnly
                   ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
                   : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
-              : null;
-        });
-      },
-    );
+            : null;
+      });
+    });
   }
 
   Future<void> _startPolling() async {
@@ -141,8 +141,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       _loading = false;
       _error = next.isEmpty
           ? (AppConfig.offlineOnly
-              ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
-              : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
+                ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
+                : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
           : null;
     });
   }
@@ -179,9 +179,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     }
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لا توجد مساحة عمل محددة.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('لا توجد مساحة عمل محددة.')));
       return;
     }
     final name = TextEditingController();
@@ -210,7 +210,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     name.dispose();
     if (ok != true || trimmed.isEmpty) return;
     try {
-      await ref.read(catalogAdminServiceProvider).createTable(
+      await ref
+          .read(catalogAdminServiceProvider)
+          .createTable(
             workspaceId: workspaceId,
             name: trimmed,
             permissions: CashierPermissions.resolve(
@@ -223,15 +225,15 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تمت إضافة «$trimmed».')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تمت إضافة «$trimmed».')));
     } catch (e) {
       if (!mounted) return;
       final message = e is PosException ? e.messageAr : '$e';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر إضافة الطاولة: $message')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تعذر إضافة الطاولة: $message')));
     }
   }
 
@@ -271,7 +273,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     name.dispose();
     if (ok != true || trimmed.isEmpty) return;
     try {
-      await ref.read(catalogAdminServiceProvider).updateTable(
+      await ref
+          .read(catalogAdminServiceProvider)
+          .updateTable(
             workspaceId: workspaceId,
             localId: localId,
             name: trimmed,
@@ -318,7 +322,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     );
     if (ok != true) return;
     try {
-      await ref.read(catalogAdminServiceProvider).deleteTable(
+      await ref
+          .read(catalogAdminServiceProvider)
+          .deleteTable(
             workspaceId: workspaceId,
             localId: localId,
             permissions: _perms,
@@ -346,7 +352,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
             for (final table in _tables)
               ListTile(
                 title: Text('${table['name']}'),
-                subtitle: Text(PosLabels.tableStatus(table['status']?.toString())),
+                subtitle: Text(
+                  PosLabels.tableStatus(table['status']?.toString()),
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -410,10 +418,10 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     final crossAxis = width >= 1100
         ? 5
         : width >= 800
-            ? 4
-            : width >= 520
-                ? 3
-                : 2;
+        ? 4
+        : width >= 520
+        ? 3
+        : 2;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -503,7 +511,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    final maxW = constraints.maxWidth.isFinite &&
+                    final maxW =
+                        constraints.maxWidth.isFinite &&
                             constraints.maxWidth > 0
                         ? constraints.maxWidth
                         : MediaQuery.sizeOf(context).width;
@@ -515,8 +524,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                       onRefresh: _load,
                       child: GridView.builder(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxis,
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
@@ -537,8 +545,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   }
 
   Widget _tableCard(Map<String, dynamic> table) {
-    final occupied = table['status'] == 'occupied' ||
-        table['session_open'] == true;
+    final occupied =
+        table['status'] == 'occupied' || table['session_open'] == true;
     final openedAt = parseOpenedAt(table['opened_at']);
     final total = asDoubleOr(table['total']);
     final orders = asIntOr(table['open_orders_count'] ?? table['orders_count']);
@@ -549,7 +557,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     }
 
     return Material(
-      color: Colors.white,
+      color: HasimColors.surface,
       borderRadius: BorderRadius.circular(HasimRadius.md),
       clipBehavior: Clip.antiAlias,
       child: PosTap(
@@ -592,12 +600,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   ),
                   const SizedBox(height: 6),
                   occupied
-                      ? HsBadge.occupied(
-                          PosLabels.tableStatus('occupied'),
-                        )
-                      : HsBadge.available(
-                          PosLabels.tableStatus('available'),
-                        ),
+                      ? HsBadge.occupied(PosLabels.tableStatus('occupied'))
+                      : HsBadge.available(PosLabels.tableStatus('available')),
                   const SizedBox(height: 6),
                   occupied
                       ? OccupiedDurationLabel(

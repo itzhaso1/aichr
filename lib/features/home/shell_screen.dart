@@ -15,6 +15,7 @@ import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/checkout_service.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_errors.dart';
+import '../../core/pos/pos_labels.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
@@ -189,7 +190,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     final workspaceName = ref.watch(
       authControllerProvider.select(
         (auth) =>
-            (auth.valueOrNull?.workspace?['name'] as String?) ?? 'المتجر المحلي',
+            (auth.valueOrNull?.workspace?['name'] as String?) ??
+            'المتجر المحلي',
       ),
     );
 
@@ -361,9 +363,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       if (tableLocalId != null && tableLocalId.isEmpty) tableLocalId = null;
       var tableServerId = cart.tableId;
       if (cart.channel == OrderChannel.table) {
-        final tables = await ref.read(tablesRepositoryProvider).listTables(
-              workspaceId,
-            );
+        final tables = await ref
+            .read(tablesRepositoryProvider)
+            .listTables(workspaceId);
         Map<String, dynamic>? match;
         for (final row in tables) {
           final local = '${row['local_id'] ?? ''}'.trim();
@@ -386,7 +388,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         }
         tableLocalId = '${match['local_id'] ?? tableLocalId ?? ''}'.trim();
         if (tableLocalId.isEmpty) tableLocalId = null;
-        tableServerId = asInt(match['id'] ?? match['server_id']) ?? tableServerId;
+        tableServerId =
+            asInt(match['id'] ?? match['server_id']) ?? tableServerId;
       }
       final store = await ref.read(localAuthServiceProvider).anyStore();
       final resolvedPerms = CashierPermissions.resolve(
@@ -1088,7 +1091,9 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
                     if (mounted) setState(() {});
                     return;
                   }
-                  ref.read(cartControllerProvider.notifier).addItem(
+                  ref
+                      .read(cartControllerProvider.notifier)
+                      .addItem(
                         productLocalId: '${hit['local_id']}',
                         menuItemId: asInt(hit['id']),
                         name: '${hit['name']}',
@@ -1114,26 +1119,28 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
         if (widget.showMobileCategories)
           SizedBox(
             height: 48,
-            child: ref.watch(categoriesProvider).when(
-              data: (list) => ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _catChip(
-                    'الكل',
-                    selectedCategoryId == null,
-                    () => onCategory(null),
+            child: ref
+                .watch(categoriesProvider)
+                .when(
+                  data: (list) => ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _catChip(
+                        'الكل',
+                        selectedCategoryId == null,
+                        () => onCategory(null),
+                      ),
+                      for (final cat in list)
+                        _catChip(
+                          (cat['name'] as String?) ?? '',
+                          selectedCategoryId == entityKey(cat),
+                          () => onCategory(entityKey(cat)),
+                        ),
+                    ],
                   ),
-                  for (final cat in list)
-                    _catChip(
-                      (cat['name'] as String?) ?? '',
-                      selectedCategoryId == entityKey(cat),
-                      () => onCategory(entityKey(cat)),
-                    ),
-                ],
-              ),
-              loading: () => const SizedBox.shrink(),
-              error: (_, _) => const SizedBox.shrink(),
-            ),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, _) => const SizedBox.shrink(),
+                ),
           ),
         if (widget.showMobileCategories) const SizedBox(height: 10),
         Expanded(
@@ -1213,7 +1220,8 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
             final id = asIntOr(item['id']);
             final name = '${item['name'] ?? ''}';
             final price = asDoubleOr(item['price']);
-            final available = item['is_active'] != false &&
+            final available =
+                item['is_active'] != false &&
                 item['availability'] != 'unavailable';
             return ProductCard(
               key: ValueKey(
@@ -1227,9 +1235,12 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
               sku: item['sku'] as String?,
               available: available,
               onAdd: () {
-                final localId = (item['local_id'] as String?) ??
+                final localId =
+                    (item['local_id'] as String?) ??
                     (item['id']?.toString() ?? name);
-                ref.read(cartControllerProvider.notifier).addItem(
+                ref
+                    .read(cartControllerProvider.notifier)
+                    .addItem(
                       productLocalId: localId,
                       menuItemId: id == 0 ? null : id,
                       name: name,
@@ -1564,59 +1575,133 @@ class _TablePickerField extends StatelessWidget {
   }
 
   Future<void> _open(BuildContext context) async {
-    final picked = await showModalBottomSheet<_TablePick>(
+    final picked = await showDialog<_TablePick>(
       context: context,
-      showDragHandle: true,
       builder: (ctx) {
-        return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Text(
-                  'اختر الطاولة',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                ),
-              ),
-              if (tables.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'لا توجد طاولات محلية. أضف طاولة من الإعدادات.',
-                    style: TextStyle(color: HasimColors.muted),
-                  ),
-                )
-              else
-                for (final t in tables)
-                  PosTap(
-                    onTap: () {
-                      final id = asInt(t['id'] ?? t['server_id']);
-                      if (id == null) return;
-                      Navigator.pop(
-                        ctx,
-                        _TablePick(
-                          id: id,
-                          localId: t['local_id']?.toString(),
+        final media = MediaQuery.sizeOf(ctx);
+        final dialogH = (media.height * 0.7).clamp(280.0, 520.0).toDouble();
+        final dialogW = (media.width * 0.86).clamp(280.0, 720.0).toDouble();
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 24,
+          ),
+          backgroundColor: HasimColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+          ),
+          child: SizedBox(
+            width: dialogW,
+            height: dialogH,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'اختر الطاولة',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                          ),
                         ),
-                      );
-                    },
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
                       ),
-                      color: asInt(t['id'] ?? t['server_id']) == selectedId
-                          ? HasimColors.brandSoft
-                          : null,
-                      child: Text(
-                        '${t['name']}',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      PosTap(
+                        onTap: () => Navigator.pop(ctx),
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.close, size: 20),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (tables.isEmpty)
+                    const Expanded(
+                      child: Center(
+                        child: Text(
+                          'لا توجد طاولات محلية. أضف طاولة من الإعدادات.',
+                          style: TextStyle(color: HasimColors.muted),
+                        ),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, c) {
+                          var cols = (c.maxWidth / 160).floor();
+                          if (cols < 1) cols = 1;
+                          if (cols > 4) cols = 4;
+                          return GridView.builder(
+                            itemCount: tables.length,
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: cols,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio: 1.35,
+                                ),
+                            itemBuilder: (context, i) {
+                              final t = tables[i];
+                              final id = asInt(t['id'] ?? t['server_id']);
+                              final selected = id != null && id == selectedId;
+                              return PosTap(
+                                onTap: () {
+                                  if (id == null) return;
+                                  Navigator.pop(
+                                    ctx,
+                                    _TablePick(
+                                      id: id,
+                                      localId: t['local_id']?.toString(),
+                                    ),
+                                  );
+                                },
+                                child: HsCard(
+                                  color: selected
+                                      ? HasimColors.brandSoft
+                                      : HasimColors.surface,
+                                  borderColor: selected
+                                      ? HasimColors.brand
+                                      : HasimColors.border,
+                                  padding: const EdgeInsets.all(10),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        '${t['name']}',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        PosLabels.tableStatus(
+                                          t['status']?.toString(),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: HasimColors.muted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
                       ),
                     ),
-                  ),
-            ],
+                ],
+              ),
+            ),
           ),
         );
       },

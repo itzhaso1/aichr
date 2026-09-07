@@ -33,6 +33,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   Future<void>? _inflight;
   var _pendingReload = false;
   var _reloadScheduled = false;
+  var _invoiceFilter = 'all';
 
   @override
   void initState() {
@@ -123,10 +124,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       try {
         local = await ref
             .read(localReportsServiceProvider)
-            .daily(
-              workspaceId: resolvedWorkspace,
-              date: _date,
-            )
+            .daily(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
       } on Forbidden {
         rethrow;
@@ -156,6 +154,10 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
         _loading = false;
         _error = null;
         _forbidden = false;
+        final keys = asMapList(local['invoices']).map(_invoiceKey).toSet();
+        if (_invoiceFilter != 'all' && !keys.contains(_invoiceFilter)) {
+          _invoiceFilter = 'all';
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -281,10 +283,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                       'ملخص يومي من المبيعات والفواتير المحلية',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: HasimColors.muted,
-                      ),
+                      style: TextStyle(fontSize: 11, color: HasimColors.muted),
                     ),
                   ],
                 ),
@@ -294,7 +293,10 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                 onTap: _pickDate,
                 child: ConstrainedBox(
                   key: const ValueKey('reports-date-chip'),
-                  constraints: const BoxConstraints(minWidth: 88, minHeight: 36),
+                  constraints: const BoxConstraints(
+                    minWidth: 88,
+                    minHeight: 36,
+                  ),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: HasimColors.surface,
@@ -369,10 +371,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _metric(
-                '${_channelCount(summary, channels, 'table')}',
-                'طاولات',
-              ),
+              _metric('${_channelCount(summary, channels, 'table')}', 'طاولات'),
               _metric(
                 '${_channelCount(summary, channels, 'takeaway')}',
                 'خارجي',
@@ -463,13 +462,32 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           const SizedBox(height: 8),
           if (invoices.isEmpty)
             const HsEmpty(title: 'لا توجد فواتير لهذا اليوم.')
-          else
-            for (final inv in invoices)
-              _rowCard(
-                '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
-                asDoubleOr(inv['total_amount']).toStringAsFixed(2),
-                highlight: true,
+          else ...[
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: HsSelectField(
+                valueLabel: _invoiceFilterLabel(invoices),
+                options: [
+                  (value: 'all', label: 'كل الفواتير'),
+                  for (final inv in invoices)
+                    (
+                      value: _invoiceKey(inv),
+                      label:
+                          '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
+                    ),
+                ],
+                onSelected: (value) => setState(() => _invoiceFilter = value),
               ),
+            ),
+            const SizedBox(height: 8),
+            HsSoftGrid(
+              minTileWidth: 300,
+              maxColumns: 3,
+              children: [
+                for (final inv in _visibleInvoices(invoices)) _invoiceTile(inv),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
           const Text(
             'الطلبات المغلقة',
@@ -577,9 +595,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      color: card.$4
-                          ? HasimColors.ctaDark
-                          : HasimColors.muted,
+                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -598,9 +614,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: card.$4
-                          ? HasimColors.ctaDark
-                          : HasimColors.muted,
+                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
                     ),
                   ),
                 ],
@@ -635,6 +649,60 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     if (value == null) return '—';
     final s = value.toString().trim();
     return s.isEmpty ? '—' : s;
+  }
+
+  String _invoiceKey(Map<String, dynamic> inv) =>
+      'inv:${_str(inv['invoice_number'])}';
+
+  String _invoiceFilterLabel(List<Map<String, dynamic>> invoices) {
+    if (_invoiceFilter == 'all') return 'كل الفواتير';
+    for (final inv in invoices) {
+      if (_invoiceKey(inv) == _invoiceFilter) {
+        return _str(inv['invoice_number']);
+      }
+    }
+    return 'كل الفواتير';
+  }
+
+  List<Map<String, dynamic>> _visibleInvoices(
+    List<Map<String, dynamic>> invoices,
+  ) {
+    if (_invoiceFilter == 'all') return invoices;
+    return [
+      for (final inv in invoices)
+        if (_invoiceKey(inv) == _invoiceFilter) inv,
+    ];
+  }
+
+  Widget _invoiceTile(Map<String, dynamic> inv) {
+    return HsCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              asDoubleOr(inv['total_amount']).toStringAsFixed(2),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: HasimColors.ctaDark,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _metric(String value, String label, {bool highlight = false}) {

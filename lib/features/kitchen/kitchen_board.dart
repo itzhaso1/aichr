@@ -94,11 +94,16 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
     final workspaceId = _workspaceId ?? ref.read(workspaceIdProvider);
     if (workspaceId == null) return;
     try {
-      await ref.read(kitchenLocalServiceProvider).updateStatus(
+      await ref
+          .read(kitchenLocalServiceProvider)
+          .updateStatus(
             workspaceId: workspaceId,
             orderLocalId: localId,
             status: status,
-            permissions: ref.read(authControllerProvider).valueOrNull?.permissions,
+            permissions: ref
+                .read(authControllerProvider)
+                .valueOrNull
+                ?.permissions,
           );
     } catch (e) {
       if (!mounted) return;
@@ -246,7 +251,7 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: HasimColors.surface,
                 borderRadius: BorderRadius.circular(HasimRadius.sm),
               ),
               child: Text(
