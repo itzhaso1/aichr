@@ -434,17 +434,31 @@ class OrdersRepository {
     required int workspaceId,
     required int tableId,
   }) async {
-    final all = await listOrdersForTable(
-      workspaceId: workspaceId,
-      tableId: tableId,
-    );
-    return [
-      for (final order in all)
-        if (order['pos_status'] != 'cancelled' &&
-            order['payment_status'] != 'paid' &&
-            order['pos_status'] != 'completed')
-          order,
-    ];
+    if (workspaceId <= 0 || tableId <= 0) return const [];
+    final table = await _lookupTable(workspaceId, tableId);
+    final rows = await (_db.select(_db.localOrders)
+          ..where((t) {
+            Expression<bool> match = t.tableServerId.equals(tableId);
+            if (table != null) {
+              match = match | t.tableLocalId.equals(table.localId);
+              final sid = table.serverId;
+              if (sid != null && sid != tableId) {
+                match = match | t.tableServerId.equals(sid);
+              }
+            }
+            return t.workspaceId.equals(workspaceId) &
+                t.posStatus.isNotValue('cancelled') &
+                t.posStatus.isNotValue('completed') &
+                t.paymentStatus.isNotValue('paid') &
+                match;
+          })
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+    final out = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      out.add(_orderToDisplay(row, await _itemsFor(row.localId)));
+    }
+    return out;
   }
 
   Future<List<Map<String, dynamic>>> listUnsyncedForTable({
@@ -916,6 +930,9 @@ class OrdersRepository {
             'local_id': item.localId,
             'pos_menu_item_id': item.productServerId,
             'product_name': item.name,
+            'item_name': item.name,
+            'name': item.name,
+            'product_local_id': item.productLocalId,
             'quantity': item.quantity,
             'unit_price': Money.fromCents(item.unitPrice),
             'discount_amount': Money.fromCents(item.discountAmount),
@@ -983,6 +1000,16 @@ class OrdersRepository {
                 match;
           }))
         .get();
+    Map<String, dynamic> payload = const {};
+    try {
+      final decoded = jsonDecode(table.payloadJson);
+      if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    if (open.isEmpty) {
+      final occupiedCheckout = table.status == 'occupied' &&
+          '${payload['last_invoice_local_id'] ?? ''}'.trim().isNotEmpty;
+      if (occupiedCheckout) return;
+    }
     var subtotal = 0;
     var tax = 0;
     var discount = 0;
@@ -995,11 +1022,6 @@ class OrdersRepository {
       total += order.totalAmount;
       orderMaps.add(_orderToDisplay(order, await _itemsFor(order.localId)));
     }
-    Map<String, dynamic> payload = const {};
-    try {
-      final decoded = jsonDecode(table.payloadJson);
-      if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
-    } catch (_) {}
     final next = {
       ...payload,
       'id': sid,

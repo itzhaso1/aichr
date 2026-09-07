@@ -279,8 +279,7 @@ class LocalFinanceRepository {
     final items = <Map<String, dynamic>>[];
     for (final raw in asMapList(payload['items'])) {
       items.add({
-        'item_name':
-            '${raw['item_name'] ?? raw['product_name'] ?? raw['name'] ?? 'صنف'}',
+        'item_name': catalogItemName(raw),
         'quantity': asIntOr(raw['quantity'], 1),
         'unit_price': asDoubleOr(raw['unit_price']),
         'tax_amount': asDoubleOr(raw['tax_amount']),

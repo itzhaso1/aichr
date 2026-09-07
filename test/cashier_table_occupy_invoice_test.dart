@@ -273,4 +273,306 @@ void main() {
       ]),
     );
   });
+
+  List<String> itemNamesOnTable(Map<String, dynamic>? table) {
+    final names = <String>[];
+    for (final order in asMapList(table?['orders'])) {
+      expect(orderDisplayLabel(order), isNot('#null'));
+      for (final item in asMapList(order['items'])) {
+        final name = catalogItemName(item);
+        expect(name, isNot('null'));
+        names.add(name);
+      }
+    }
+    return names;
+  }
+
+  test('occupy stores nested product names not a flat #null list', () async {
+    await seedTable();
+    final occupied = await tables.occupyFromCheckout(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableLocalId: 'uuid-table-4',
+      tableServerId: 4,
+      invoiceLocalId: 'inv-names',
+      invoiceNumber: 'INV-NAMES',
+      orderLocalId: 'ord-names',
+      total: 15,
+      items: [
+        {
+          'product_local_id': 'prod-burger',
+          'item_name': 'Burger',
+          'quantity': 2,
+          'unit_price': 5,
+          'total_amount': 10,
+        },
+        {
+          'product_local_id': 'prod-cola',
+          'item_name': 'Cola',
+          'quantity': 1,
+          'unit_price': 2,
+          'total_amount': 2,
+        },
+        {
+          'product_local_id': 'prod-fries',
+          'item_name': 'Fries',
+          'quantity': 1,
+          'unit_price': 3,
+          'total_amount': 3,
+        },
+      ],
+    );
+    expect(occupied?['status'], 'occupied');
+    expect(occupied?['opened_at'], isNotEmpty);
+    expect(itemNamesOnTable(occupied), ['Burger', 'Cola', 'Fries']);
+    final orders = asMapList(occupied?['orders']);
+    expect(orders, hasLength(1));
+    expect(orders.single['order_number'], 'INV-NAMES');
+  });
+
+  test('closing then occupying again does not revive old products', () async {
+    await seedTable();
+    await tables.occupyFromCheckout(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: 4,
+      invoiceLocalId: 'inv-old',
+      invoiceNumber: 'INV-OLD',
+      total: 10,
+      items: [
+        {
+          'item_name': 'Burger',
+          'quantity': 1,
+          'unit_price': 10,
+          'total_amount': 10,
+        },
+      ],
+    );
+    final closed = await tables.closeSessionLocal(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: 4,
+    );
+    expect(closed['freed_only'], isTrue);
+    expect(closed['invoice'], isNull);
+    final empty = await tables.getTable(1, 4);
+    expect(empty?['status'], 'available');
+    expect(itemNamesOnTable(empty), isEmpty);
+    expect(asMapList(empty?['last_sale_items']), isEmpty);
+
+    final again = await tables.occupyFromCheckout(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: 4,
+      invoiceLocalId: 'inv-new',
+      invoiceNumber: 'INV-NEW',
+      total: 4,
+      items: [
+        {
+          'item_name': 'Cola',
+          'quantity': 2,
+          'unit_price': 2,
+          'total_amount': 4,
+        },
+      ],
+    );
+    expect(itemNamesOnTable(again), ['Cola']);
+    expect(itemNamesOnTable(again), isNot(contains('Burger')));
+  });
+
+  test('getTable wraps legacy flat occupy lines so names render', () async {
+    await seedTable();
+    final now = DateTime.now();
+    await (db.update(db.localTables)
+          ..where((t) => t.localId.equals('uuid-table-4')))
+        .write(
+      LocalTablesCompanion(
+        status: const Value('occupied'),
+        payloadJson: Value(
+          jsonEncode({
+            'id': 4,
+            'status': 'occupied',
+            'session_open': true,
+            'session_client_id': 'sess-legacy',
+            'opened_at': now.toUtc().toIso8601String(),
+            'orders': [
+              {
+                'item_name': 'شاي',
+                'quantity': 1,
+                'unit_price': 5,
+                'total_amount': 5,
+              },
+              {
+                'name': 'كولا',
+                'quantity': 1,
+                'unit_price': 2,
+                'total_amount': 2,
+              },
+            ],
+          }),
+        ),
+        updatedAt: Value(now),
+      ),
+    );
+    final detail = await tables.getTable(1, 4);
+    expect(detail?['status'], 'occupied');
+    expect(itemNamesOnTable(detail), ['شاي', 'كولا']);
+    expect(orderDisplayLabel(asMapList(detail?['orders']).first), isNot('#null'));
+  });
+
+  test('new cashier occupy cancels leftover unpaid lines from an old session',
+      () async {
+    await seedTable();
+    final now = DateTime.now();
+    await db.into(db.localOrders).insert(
+          LocalOrdersCompanion.insert(
+            localId: 'old-unpaid',
+            workspaceId: 1,
+            deviceId: 'dev-1',
+            clientReference: 'old-unpaid',
+            orderType: 'table',
+            tableServerId: const Value(4),
+            tableLocalId: const Value('uuid-table-4'),
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localOrderItems).insert(
+          LocalOrderItemsCompanion.insert(
+            localId: 'old-unpaid-item',
+            workspaceId: 1,
+            orderLocalId: 'old-unpaid',
+            name: 'طلب قديم',
+            quantity: 1,
+            unitPrice: 900,
+            totalAmount: 900,
+            updatedAt: now,
+          ),
+        );
+    final occupied = await tables.occupyFromCheckout(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: 4,
+      invoiceLocalId: 'inv-fresh',
+      invoiceNumber: 'INV-FRESH',
+      total: 5,
+      items: [
+        {
+          'item_name': 'Burger',
+          'quantity': 1,
+          'unit_price': 5,
+          'total_amount': 5,
+        },
+      ],
+    );
+    expect(itemNamesOnTable(occupied), ['Burger']);
+    expect(itemNamesOnTable(occupied), isNot(contains('طلب قديم')));
+    final leftover = await (db.select(db.localOrders)
+          ..where((t) => t.localId.equals('old-unpaid')))
+        .getSingle();
+    expect(leftover.posStatus, 'cancelled');
+  });
+
+  test('checkout invoice lines keep product names used on the table', () async {
+    final auth = LocalAuthService(db);
+    final catalogShift = ShiftService(db);
+    final created = await auth.bootstrapStore(
+      storeName: 'متجر أسماء',
+      adminName: 'مدير',
+      username: 'admin2',
+      pin: '1234',
+      taxRate: 0,
+    );
+    final ws = PosMode.standaloneWorkspaceId;
+    await seedTable(workspaceId: ws, tableId: 8, localId: 'table-8');
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-burger',
+            workspaceId: ws,
+            name: 'Burger',
+            price: const Value(500),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-cola',
+            workspaceId: ws,
+            name: 'Cola',
+            price: const Value(200),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-fries',
+            workspaceId: ws,
+            name: 'Fries',
+            price: const Value(300),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    final shiftId = await catalogShift.open(
+      workspaceId: ws,
+      userId: created.user.localId,
+      openingCash: 100,
+      permissions: LocalAuthService.adminPermissions,
+    );
+    final checkout = CheckoutService(
+      db,
+      StockEngine(db),
+      DocumentNumberService(db),
+      queue,
+      tables: tables,
+    );
+    await checkout.execute(
+      CheckoutCommand(
+        workspaceId: ws,
+        deviceId: 'dev-1',
+        storeId: created.store.localId,
+        clientReference: 'sale-names-1',
+        orderType: 'table',
+        tableLocalId: 'table-8',
+        tableServerId: 8,
+        shiftLocalId: shiftId,
+        permissions: LocalAuthService.adminPermissions,
+        lines: const [
+          PricedLine(
+            productLocalId: 'prod-burger',
+            name: 'Burger',
+            quantity: 2,
+            unitPrice: 5,
+          ),
+          PricedLine(
+            productLocalId: 'prod-cola',
+            name: 'Cola',
+            quantity: 1,
+            unitPrice: 2,
+          ),
+          PricedLine(
+            productLocalId: 'prod-fries',
+            name: 'Fries',
+            quantity: 1,
+            unitPrice: 3,
+          ),
+        ],
+        payments: const [PaymentTender(method: 'cash', amount: 15)],
+      ),
+    );
+    final table = await tables.getTable(ws, 8);
+    expect(itemNamesOnTable(table), ['Burger', 'Cola', 'Fries']);
+    final invoices = await finance.listInvoices(
+      workspaceId: ws,
+      fallbackAllWorkspaces: true,
+    );
+    final latest = invoices.firstWhere(
+      (row) => asDoubleOr(row['total_amount']) == 15,
+    );
+    final invoiceNames = [
+      for (final item in asMapList(latest['items'])) catalogItemName(item),
+    ];
+    expect(invoiceNames, ['Burger', 'Cola', 'Fries']);
+    final daily = await reports.daily(workspaceId: ws, date: DateTime.now());
+    expect(asIntOr(daily['summary']['invoices_count']), greaterThanOrEqualTo(1));
+  });
 }

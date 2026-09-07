@@ -83,3 +83,35 @@ String nestedName(dynamic value, {String fallback = '—'}) {
   if (value is String && value.trim().isNotEmpty) return value.trim();
   return fallback;
 }
+
+String _usableText(dynamic value) {
+  if (value == null) return '';
+  final text = '$value'.trim();
+  if (text.isEmpty || text == 'null' || text == 'NULL') return '';
+  return text;
+}
+
+/// Sale-line name from catalog/invoice/table snapshots. Never interpolates null.
+String catalogItemName(dynamic item, {String fallback = 'صنف'}) {
+  if (item is! Map) return fallback;
+  for (final key in const ['item_name', 'product_name', 'name']) {
+    final text = _usableText(item[key]);
+    if (text.isNotEmpty) return text;
+  }
+  return fallback;
+}
+
+/// Order heading for table detail. Avoids `#null` when ids are missing.
+String orderDisplayLabel(dynamic order, {String fallback = 'طلب الطاولة'}) {
+  if (order is! Map) return fallback;
+  for (final key in const [
+    'order_number',
+    'invoice_number',
+    'id',
+    'local_id',
+  ]) {
+    final text = _usableText(order[key]);
+    if (text.isNotEmpty) return '#$text';
+  }
+  return fallback;
+}

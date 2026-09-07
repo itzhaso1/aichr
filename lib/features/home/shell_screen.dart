@@ -1168,6 +1168,12 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
     );
   }
 
+  String? _productImagePath(Map<String, dynamic> item) {
+    final stored = '${item['image_path'] ?? ''}'.trim();
+    if (stored.isNotEmpty) return stored;
+    return null;
+  }
+
   Widget _grid(WidgetRef ref, List<Map<String, dynamic>> items, int crossAxis) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1198,7 +1204,7 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
               name: name,
               priceLabel: price.toStringAsFixed(2),
               currency: '${item['currency'] ?? 'SAR'}',
-              imageUrl: item['image_url'] as String?,
+              imagePath: _productImagePath(item),
               sku: item['sku'] as String?,
               available: available,
               onAdd: () {
@@ -1285,7 +1291,7 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    for (final channel in OrderChannel.values)
+                    for (final channel in OrderChannelCashier.cashierChoices)
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsetsDirectional.only(end: 4),
@@ -1461,16 +1467,6 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
           HsPrimaryButton(
             label: 'إنشاء الطلب',
             onPressed: cart.lines.isEmpty ? null : () => widget.onCheckout(),
-          ),
-          const SizedBox(height: 6),
-          HsOutlineButton(
-            label: 'طلب خارجي',
-            onPressed: cart.lines.isEmpty
-                ? null
-                : () {
-                    notifier.setChannel(OrderChannel.takeaway);
-                    widget.onCheckout();
-                  },
           ),
         ],
       ),

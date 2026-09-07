@@ -78,10 +78,16 @@ extension OrderChannelLabel on OrderChannel {
   };
 }
 
+extension OrderChannelCashier on OrderChannel {
+  /// Cashier "طلب جديد" offers table + delivery only. Takeaway remains in
+  /// the enum for historical SQLite rows and reports.
+  static const cashierChoices = [OrderChannel.table, OrderChannel.delivery];
+}
+
 class CartState {
   const CartState({
     this.lines = const [],
-    this.channel = OrderChannel.takeaway,
+    this.channel = OrderChannel.table,
     this.tableId,
     this.tableLocalId,
     this.customerId,
@@ -180,9 +186,8 @@ class CartController extends StateNotifier<CartState> {
             ),
         ],
         channel: switch (draft.channel) {
-          'table' => OrderChannel.table,
           'delivery' => OrderChannel.delivery,
-          _ => OrderChannel.takeaway,
+          _ => OrderChannel.table,
         },
         tableId: draft.tableServerId,
         tableLocalId: draft.tableLocalId,

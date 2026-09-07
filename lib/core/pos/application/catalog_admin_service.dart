@@ -50,6 +50,7 @@ class CatalogAdminService {
     double taxRate = 0,
     int? stock,
     bool trackStock = false,
+    String? imagePath,
     Map<String, dynamic>? permissions,
   }) async {
     PosPermissions.require(permissions, PosPermissions.catalog);
@@ -70,6 +71,7 @@ class CatalogAdminService {
             taxRate: Value(taxRate),
             stock: Value(stock),
             trackStock: Value(trackStock || stock != null),
+            imagePath: Value(imagePath),
             createdAt: Value(now),
             updatedAt: now,
           ),
@@ -89,6 +91,8 @@ class CatalogAdminService {
     bool? trackStock,
     bool? isActive,
     String? categoryLocalId,
+    String? imagePath,
+    bool clearImage = false,
     Map<String, dynamic>? permissions,
   }) async {
     PosPermissions.require(permissions, PosPermissions.catalog);
@@ -114,6 +118,11 @@ class CatalogAdminService {
             categoryLocalId: categoryLocalId == null
                 ? const Value.absent()
                 : Value(categoryLocalId),
+            imagePath: clearImage
+                ? const Value(null)
+                : imagePath == null
+                    ? const Value.absent()
+                    : Value(imagePath),
             updatedAt: Value(DateTime.now()),
           ),
         );
@@ -145,6 +154,7 @@ class CatalogAdminService {
       'stock': row.stock,
       'tax_rate': row.taxRate,
       'cost': Money.fromCents(row.cost),
+      'image_path': row.imagePath,
     };
   }
 

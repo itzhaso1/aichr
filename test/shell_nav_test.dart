@@ -215,6 +215,11 @@ void main() {
     expect(find.text('شاي اختبار'), findsWidgets);
     expect(find.text('برجر اختبار'), findsWidgets);
     expect(find.text('مشروبات'), findsWidgets);
+    expect(find.text('طلب جديد'), findsOneWidget);
+    expect(find.text('طاولة'), findsWidgets);
+    expect(find.text('توصيل'), findsOneWidget);
+    expect(find.text('خارجي'), findsNothing);
+    expect(find.text('طلب خارجي'), findsNothing);
 
     await tester.tap(find.text('مشروبات'));
     await tester.pump();

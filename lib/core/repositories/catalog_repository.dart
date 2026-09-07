@@ -40,6 +40,7 @@ class CatalogRepository {
           'is_active': row.isActive,
           'pos_item_category_id': row.categoryServerId,
           'workspace_id': row.workspaceId,
+          'image_path': row.imagePath,
         },
     ];
   }
