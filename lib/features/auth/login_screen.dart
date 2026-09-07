@@ -11,7 +11,7 @@ import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
-/// Offline-only entry: email + password for cashier, chef, and admin.
+/// Offline-only entry: cashier login, kitchen station, or reports station.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -149,12 +149,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          'تسجيل الدخول',
+                          'تشغيل محلي بدون إنترنت',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'كل مستخدم يدخل بإيميله وكلمة المرور. بعد الدخول تُفتح الصفحات حسب صلاحياته.',
+                          'الكاشير للمبيعات. المطبخ والتقارير محطات منفصلة من هذه الشاشة.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 16),
@@ -225,7 +225,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 ),
                               ),
                               onPressed: _busy ? null : _submit,
-                              icon: const Icon(Icons.login),
+                              icon: const Icon(Icons.storefront_outlined),
                               label: _busy
                                   ? const SizedBox(
                                       width: 18,
@@ -235,7 +235,39 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                         color: Colors.white,
                                       ),
                                     )
-                                  : const Text('دخول'),
+                                  : const Text('دخول الكاشير'),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    HasimRadius.md,
+                                  ),
+                                ),
+                              ),
+                              onPressed: () => context.go('/kitchen'),
+                              icon: const Icon(Icons.soup_kitchen_outlined),
+                              label: const Text('دخول المطبخ'),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    HasimRadius.md,
+                                  ),
+                                ),
+                              ),
+                              onPressed: () => context.go('/reports'),
+                              icon: const Icon(Icons.bar_chart_outlined),
+                              label: const Text('دخول التقارير'),
                             ),
                           ),
                         ],

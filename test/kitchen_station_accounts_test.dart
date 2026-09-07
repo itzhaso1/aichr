@@ -311,8 +311,13 @@ void main() {
     expect(cashier.isKitchenSession, isFalse);
   });
 
-  testWidgets('login requires email and password and has no kitchen kiosk',
+  testWidgets('login shows cashier, kitchen, and reports entries when a store exists',
       (tester) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await seedStore();
     final router = GoRouter(
       initialLocation: '/login',
@@ -325,6 +330,10 @@ void main() {
         GoRoute(
           path: '/kitchen',
           builder: (_, __) => const Scaffold(body: Text('kitchen-station')),
+        ),
+        GoRoute(
+          path: '/reports',
+          builder: (_, __) => const Scaffold(body: Text('reports-station')),
         ),
         GoRoute(
           path: '/standalone-setup',
@@ -350,11 +359,60 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('setup-screen'), findsNothing);
-    expect(find.text('الإيميل'), findsOneWidget);
-    expect(find.text('كلمة المرور'), findsOneWidget);
-    expect(find.text('دخول'), findsOneWidget);
-    expect(find.text('دخول المطبخ'), findsNothing);
-    expect(find.text('kitchen-station'), findsNothing);
+    expect(find.text('دخول الكاشير'), findsOneWidget);
+    expect(find.text('دخول المطبخ'), findsOneWidget);
+    expect(find.text('دخول التقارير'), findsOneWidget);
+
+    await tester.tap(find.text('دخول المطبخ'));
+    await tester.pumpAndSettle();
+    expect(find.text('kitchen-station'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
+  });
+
+  testWidgets('login reports entry opens the reports station', (tester) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await seedStore();
+    final router = GoRouter(
+      initialLocation: '/login',
+      routes: [
+        GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+        GoRoute(
+          path: '/reports',
+          builder: (_, __) => const Scaffold(body: Text('reports-station')),
+        ),
+        GoRoute(
+          path: '/standalone-setup',
+          builder: (_, __) => const Scaffold(body: Text('setup-screen')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appDatabaseProvider.overrideWith((ref) => db)],
+        child: MaterialApp.router(
+          locale: const Locale('ar'),
+          supportedLocales: const [Locale('ar'), Locale('en')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          routerConfig: router,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.ensureVisible(find.text('دخول التقارير'));
+    await tester.pump();
+    await tester.tap(find.text('دخول التقارير'));
+    await tester.pumpAndSettle();
+    expect(find.text('reports-station'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });
@@ -510,10 +568,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   });
 
-  testWidgets('reports station requires login', (tester) async {
+  testWidgets('reports station opens without a cashier session', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await seedStore();
+    final now = DateTime.now();
+    await db.into(db.localInvoices).insert(
+          LocalInvoicesCompanion.insert(
+            localId: 'inv-r',
+            workspaceId: ws,
+            deviceId: 'dev-1',
+            invoiceNumber: const Value('INV-R-1'),
+            localInvoiceNumber: const Value('INV-R-1'),
+            totalAmount: const Value(1500),
+            createdAt: now,
+          ),
+        );
+
     await tester.pumpWidget(
-      const ProviderScope(
-        child: MaterialApp(
+      ProviderScope(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) => db),
+          workspaceIdProvider.overrideWith((ref) => ws),
+        ],
+        child: const MaterialApp(
           locale: Locale('ar'),
           supportedLocales: [Locale('ar'), Locale('en')],
           localizationsDelegates: [
@@ -526,8 +607,11 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('التقارير'), findsWidgets);
-    expect(find.text('غير مصرح بعرض التقارير'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('غير مصرح بعرض التقارير'), findsNothing);
+    expect(find.text('التقارير اليومية'), findsOneWidget);
+    expect(find.text('المطبخ'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });

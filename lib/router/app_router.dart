@@ -47,15 +47,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       final session = auth.valueOrNull;
       if (session == null) {
-        if (loggingIn || pin || setup) return null;
+        if (loggingIn || pin || setup || kitchen || reports) return null;
         return '/login';
-      }
-
-      if (kitchen) {
-        return session.canUseKitchen ? null : session.landingRoute;
-      }
-      if (reports) {
-        return session.canViewReports ? null : session.landingRoute;
       }
 
       if (AppConfig.offlineOnly) {

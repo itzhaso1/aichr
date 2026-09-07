@@ -76,20 +76,6 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       return;
     }
 
-    final perms = CashierPermissions.resolve(
-      ref.read(cashierPermissionsProvider),
-      ref.read(authControllerProvider).valueOrNull?.permissions,
-    );
-    if (!CashierPermissions.canViewReports(perms)) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _forbidden = true;
-        _error = null;
-      });
-      return;
-    }
-
     try {
       Map<String, dynamic> local;
       try {
@@ -98,7 +84,6 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             .daily(
               workspaceId: resolvedWorkspace,
               date: _date,
-              permissions: perms,
             )
             .timeout(const Duration(seconds: 5));
       } on Forbidden {
