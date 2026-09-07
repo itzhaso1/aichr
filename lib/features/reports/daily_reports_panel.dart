@@ -335,9 +335,10 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           const SizedBox(height: 16),
           const Text('الملخص', style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          HsSoftGrid(
+            minTileWidth: 120,
+            maxColumns: 6,
+            tileHeight: 92,
             children: [
               _metric(
                 _num(
@@ -367,9 +368,10 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             style: TextStyle(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          HsSoftGrid(
+            minTileWidth: 120,
+            maxColumns: 6,
+            tileHeight: 92,
             children: [
               _metric('${_channelCount(summary, channels, 'table')}', 'طاولات'),
               _metric(
@@ -571,54 +573,48 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       ),
     ];
 
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+    return HsSoftGrid(
+      minTileWidth: 220,
+      maxColumns: 4,
+      tileHeight: 118,
       children: [
         for (final card in cards)
-          SizedBox(
-            width: 240,
-            child: HsCard(
-              color: card.$4 ? const Color(0xFFECFDF5) : HasimColors.surface,
-              borderColor: card.$4
-                  ? const Color(0xFFA7F3D0)
-                  : HasimColors.border,
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    card.$1,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
-                    ),
+          HsCard(
+            color: card.$4 ? const Color(0xFFECFDF5) : HasimColors.surface,
+            borderColor: card.$4 ? const Color(0xFFA7F3D0) : HasimColors.border,
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  card.$1,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${card.$2}',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      color: card.$4
-                          ? const Color(0xFF065F46)
-                          : HasimColors.ink,
-                    ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${card.$2}',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: card.$4 ? const Color(0xFF065F46) : HasimColors.ink,
                   ),
-                  Text(
-                    'مفتوحة الآن: ${card.$3}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
-                    ),
+                ),
+                Text(
+                  'مفتوحة الآن: ${card.$3}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
       ],
@@ -706,28 +702,30 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   }
 
   Widget _metric(String value, String label, {bool highlight = false}) {
-    return SizedBox(
-      width: 108,
-      child: HsCard(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        child: Column(
-          children: [
-            Text(
-              value,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                color: highlight ? HasimColors.ctaDark : HasimColors.ink,
-              ),
+    return HsCard(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: highlight ? HasimColors.ctaDark : HasimColors.ink,
             ),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: HasimColors.muted),
-            ),
-          ],
-        ),
+          ),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 11, color: HasimColors.muted),
+          ),
+        ],
       ),
     );
   }
