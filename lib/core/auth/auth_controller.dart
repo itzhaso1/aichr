@@ -35,6 +35,9 @@ class AuthSession {
   final bool isLocalMode;
 
   String get userName => (user['name'] as String?) ?? '';
+
+  bool get isKitchenSession =>
+      LocalAuthService.isKitchenRole(user['role']?.toString());
 }
 
 class AuthRepository {

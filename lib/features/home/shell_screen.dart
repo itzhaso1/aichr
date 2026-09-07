@@ -25,7 +25,6 @@ import '../../core/widgets/pos_tap.dart';
 import '../admin/admin_placeholders.dart';
 import '../cart/cart_controller.dart';
 import '../invoices/invoices_list.dart';
-import '../kitchen/kitchen_board.dart';
 import '../orders/menu_orders_feed.dart';
 import '../orders/orders_list.dart';
 import '../reports/daily_reports_panel.dart';
@@ -38,7 +37,6 @@ enum _PosSection {
   tables,
   orders,
   menu,
-  kitchen,
   invoices,
   customers,
   items,
@@ -163,7 +161,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           PosShellTab.tables => _PosSection.tables,
           PosShellTab.orders => _PosSection.orders,
           PosShellTab.menu => _PosSection.menu,
-          PosShellTab.kitchen => _PosSection.kitchen,
+          PosShellTab.kitchen => _PosSection.cashier,
           PosShellTab.invoices => _PosSection.invoices,
           PosShellTab.customers => _PosSection.cashier,
           PosShellTab.items => _PosSection.items,
@@ -255,7 +253,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       _PosSection.tables => const TablesBoard(),
       _PosSection.orders => const OrdersList(),
       _PosSection.menu => const MenuOrdersFeed(),
-      _PosSection.kitchen => const KitchenBoard(),
       _PosSection.invoices => const InvoicesList(),
       _PosSection.customers => const SizedBox.shrink(),
       _PosSection.items => const ItemsAdminPanel(),
@@ -668,7 +665,6 @@ class _TopNav extends ConsumerWidget {
       (_PosSection.tables, 'الطاولات'),
       (_PosSection.menu, 'طلبات المنيو'),
       (_PosSection.orders, 'الطلبات'),
-      (_PosSection.kitchen, 'المطبخ'),
       (_PosSection.invoices, 'الفواتير'),
       (_PosSection.reports, 'التقارير'),
       if (CashierPermissions.canManageMenu(
@@ -1657,6 +1653,9 @@ class _OrderTypeChip extends StatelessWidget {
         ),
         child: Text(
           label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,

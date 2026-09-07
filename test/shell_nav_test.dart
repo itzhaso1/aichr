@@ -218,8 +218,8 @@ void main() {
     expect(find.text('طلب جديد'), findsOneWidget);
     expect(find.text('طاولة'), findsWidgets);
     expect(find.text('توصيل'), findsOneWidget);
-    expect(find.text('خارجي'), findsNothing);
-    expect(find.text('طلب خارجي'), findsNothing);
+    expect(find.text('طلب خارجي'), findsOneWidget);
+    expect(find.text('المطبخ'), findsNothing);
 
     await tester.tap(find.text('مشروبات'));
     await tester.pump();

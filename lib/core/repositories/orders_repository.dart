@@ -582,9 +582,31 @@ class OrdersRepository {
               ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
               ..limit(limit))
             .get();
+    final tableIds = {
+      for (final row in rows)
+        if (row.tableLocalId != null && row.tableLocalId!.trim().isNotEmpty)
+          row.tableLocalId!,
+    };
+    final tablesById = <String, LocalTable>{};
+    if (tableIds.isNotEmpty) {
+      final found = await (_db.select(
+        _db.localTables,
+      )..where((t) => t.localId.isIn(tableIds))).get();
+      for (final table in found) {
+        tablesById[table.localId] = table;
+      }
+    }
     final out = <Map<String, dynamic>>[];
     for (final row in rows) {
-      out.add(_orderToDisplay(row, await _itemsFor(row.localId)));
+      out.add(
+        _orderToDisplay(
+          row,
+          await _itemsFor(row.localId),
+          table: row.tableLocalId == null
+              ? null
+              : tablesById[row.tableLocalId!],
+        ),
+      );
     }
     return out;
   }
@@ -890,17 +912,30 @@ class OrdersRepository {
 
   Map<String, dynamic> _orderToDisplay(
     LocalOrder order,
-    List<LocalOrderItem> items,
-  ) {
+    List<LocalOrderItem> items, {
+    LocalTable? table,
+  }) {
     final unsynced =
         order.syncStatus == 'pending' ||
         order.syncStatus == 'syncing' ||
         order.syncStatus == 'failed';
+    final numbered = order.orderNumber?.trim();
     return {
       'id': order.serverId ?? order.localId,
       'local_id': order.localId,
       'is_local_pending': unsynced,
-      'order_number': order.serverId != null ? '${order.serverId}' : 'محلي',
+      'order_number': (numbered != null && numbered.isNotEmpty)
+          ? numbered
+          : (order.serverId != null ? '${order.serverId}' : 'محلي'),
+      'order_type': order.orderType,
+      'created_at': order.createdAt.toIso8601String(),
+      'source': 'POS',
+      if (table != null)
+        'table': {
+          'id': table.serverId ?? table.localId,
+          'local_id': table.localId,
+          'name': table.name,
+        },
       'pos_status': order.posStatus,
       'payment_status': order.paymentStatus,
       'sync_status': order.syncStatus,

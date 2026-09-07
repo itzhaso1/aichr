@@ -73,15 +73,18 @@ enum OrderChannel { table, takeaway, delivery }
 extension OrderChannelLabel on OrderChannel {
   String get labelAr => switch (this) {
     OrderChannel.table => 'طاولة',
-    OrderChannel.takeaway => 'خارجي',
+    OrderChannel.takeaway => 'طلب خارجي',
     OrderChannel.delivery => 'توصيل',
   };
 }
 
 extension OrderChannelCashier on OrderChannel {
-  /// Cashier "طلب جديد" offers table + delivery only. Takeaway remains in
-  /// the enum for historical SQLite rows and reports.
-  static const cashierChoices = [OrderChannel.table, OrderChannel.delivery];
+  /// New Order chips: table, then takeaway beside delivery.
+  static const cashierChoices = [
+    OrderChannel.table,
+    OrderChannel.takeaway,
+    OrderChannel.delivery,
+  ];
 }
 
 class CartState {
@@ -187,6 +190,7 @@ class CartController extends StateNotifier<CartState> {
         ],
         channel: switch (draft.channel) {
           'delivery' => OrderChannel.delivery,
+          'takeaway' => OrderChannel.takeaway,
           _ => OrderChannel.table,
         },
         tableId: draft.tableServerId,

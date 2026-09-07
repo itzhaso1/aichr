@@ -12,9 +12,15 @@ void main() {
   });
 
   test('order type never uses session wording for takeaway', () {
-    expect(PosLabels.orderType('takeaway'), 'خارجي');
+    expect(PosLabels.orderType('takeaway'), 'طلب خارجي');
     expect(PosLabels.orderType('table'), 'طاولة');
     expect(PosLabels.orderType('delivery'), 'توصيل');
+    expect(PosLabels.kitchenHeading(orderType: 'takeaway'), 'طلب خارجي');
+    expect(PosLabels.kitchenHeading(orderType: 'delivery'), 'توصيل');
+    expect(
+      PosLabels.kitchenHeading(orderType: 'table', tableName: 'طاولة 4'),
+      'طاولة 4',
+    );
   });
 
   test('table status labels match web board', () {

@@ -51,7 +51,13 @@ class _PinLoginScreenState extends ConsumerState<PinLoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('دخول محلي')),
+      appBar: AppBar(
+        title: const Text('دخول الكاشير'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go('/login'),
+        ),
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 440),
@@ -64,7 +70,7 @@ class _PinLoginScreenState extends ConsumerState<PinLoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Text(
-                      'أدخل مستخدم المتجر المحلي ورمز PIN.',
+                      'حساب الكاشير أو المدير. حساب الشيف يفتح المطبخ فقط.',
                       style: TextStyle(color: HasimColors.muted),
                     ),
                     const SizedBox(height: 16),

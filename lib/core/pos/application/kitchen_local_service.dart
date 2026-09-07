@@ -20,6 +20,20 @@ class KitchenLocalService {
       )
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
     return query.watch().asyncMap((rows) async {
+      final tableIds = {
+        for (final row in rows)
+          if (row.tableLocalId != null && row.tableLocalId!.trim().isNotEmpty)
+            row.tableLocalId!,
+      };
+      final tablesById = <String, LocalTable>{};
+      if (tableIds.isNotEmpty) {
+        final found = await (_db.select(
+          _db.localTables,
+        )..where((t) => t.localId.isIn(tableIds))).get();
+        for (final table in found) {
+          tablesById[table.localId] = table;
+        }
+      }
       final out = <Map<String, dynamic>>[];
       for (final row in rows) {
         final items =
@@ -29,6 +43,9 @@ class KitchenLocalService {
                       t.isRemoved.equals(false),
                 ))
                 .get();
+        final table = row.tableLocalId == null
+            ? null
+            : tablesById[row.tableLocalId!];
         out.add({
           'id': row.serverId ?? row.localId,
           'local_id': row.localId,
@@ -38,11 +55,20 @@ class KitchenLocalService {
           'payment_status': row.paymentStatus,
           'notes': row.notes,
           'created_at': row.createdAt.toIso8601String(),
+          'table_local_id': row.tableLocalId,
+          if (table != null)
+            'table': {
+              'id': table.serverId ?? table.localId,
+              'local_id': table.localId,
+              'name': table.name,
+            },
           'items': [
             for (final item in items)
               {
                 'id': item.localId,
                 'item_name': item.name,
+                'product_name': item.name,
+                'name': item.name,
                 'quantity': item.quantity,
                 'notes': item.notes,
               },

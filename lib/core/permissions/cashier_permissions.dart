@@ -48,6 +48,9 @@ class CashierPermissions {
 
   static bool canBackup(Map<String, dynamic>? p) => can(p, 'workspace.manage');
 
+  static bool canManageUsers(Map<String, dynamic>? p) =>
+      can(p, 'workspace.manage');
+
   /// Prefer bootstrap snapshot; fall back to auth session permissions.
   static Map<String, dynamic> resolve(
     Map<String, dynamic>? bootstrap,

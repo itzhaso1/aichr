@@ -42,8 +42,14 @@ class LocalAuthService {
           'workspace.manage': false,
           'pos.manage': false,
         };
+      case 'chef':
       case 'kitchen':
-        return {'pos.use': true, 'orders.manage': true, 'tables.manage': true};
+        return {
+          'pos.use': true,
+          'kitchen.use': true,
+          'orders.manage': true,
+        };
+      case 'cashier':
       default:
         return {
           'pos.use': true,
@@ -52,6 +58,21 @@ class LocalAuthService {
           'reports.view': true,
         };
     }
+  }
+
+  static bool isKitchenRole(String? role) {
+    final value = (role ?? '').trim().toLowerCase();
+    return value == 'kitchen' || value == 'chef';
+  }
+
+  static String roleLabelAr(String? role) {
+    final value = (role ?? '').trim().toLowerCase();
+    return switch (value) {
+      'admin' => 'مدير',
+      'manager' => 'مشرف',
+      'chef' || 'kitchen' => 'شيف',
+      _ => 'كاشير',
+    };
   }
 
   Future<LocalStore?> storeForWorkspace(int workspaceId) {
@@ -179,6 +200,12 @@ class LocalAuthService {
     String role = 'cashier',
   }) async {
     if (pin.trim().length < 4) throw const InvalidPin();
+    final normalizedRole = switch (role.trim().toLowerCase()) {
+      'chef' || 'kitchen' => 'chef',
+      'admin' => 'admin',
+      'manager' => 'manager',
+      _ => 'cashier',
+    };
     final existing =
         await (_db.select(_db.localUsers)..where(
               (t) =>
@@ -202,7 +229,7 @@ class LocalAuthService {
             username: username.trim().toLowerCase(),
             pinSalt: salt,
             pinHash: hashPin(pin, salt),
-            role: Value(role),
+            role: Value(normalizedRole),
             createdAt: now,
             updatedAt: now,
           ),

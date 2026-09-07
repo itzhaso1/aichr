@@ -49,14 +49,15 @@ void main() {
     expect(cart.toOrderPayload(clientReference: 'x')['order_type'], 'delivery');
   });
 
-  test('cashier new-order choices exclude takeaway', () {
+  test('cashier new-order choices put takeaway beside delivery', () {
     expect(
       OrderChannelCashier.cashierChoices,
-      [OrderChannel.table, OrderChannel.delivery],
+      [
+        OrderChannel.table,
+        OrderChannel.takeaway,
+        OrderChannel.delivery,
+      ],
     );
-    expect(
-      OrderChannelCashier.cashierChoices.contains(OrderChannel.takeaway),
-      isFalse,
-    );
+    expect(OrderChannel.takeaway.labelAr, 'طلب خارجي');
   });
 }

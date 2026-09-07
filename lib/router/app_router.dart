@@ -11,6 +11,7 @@ import '../features/auth/pin_login_screen.dart';
 import '../features/auth/pos_blocked_screen.dart';
 import '../features/auth/standalone_setup_screen.dart';
 import '../features/home/shell_screen.dart';
+import '../features/kitchen/kitchen_station_screen.dart';
 
 /// GoRouter must NOT be rebuilt on every auth state change.
 /// Watching auth inside this provider remounted ShellScreen → re-hit
@@ -28,6 +29,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final pin = state.matchedLocation == '/pin';
       final setup = state.matchedLocation == '/standalone-setup';
       final blocked = state.matchedLocation == '/pos-blocked';
+      final kitchen = state.matchedLocation == '/kitchen';
 
       // Offline-only: cloud auth routes are dead ends.
       if (AppConfig.offlineOnly) {
@@ -43,11 +45,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       final session = auth.valueOrNull;
       if (session == null) {
-        if (loggingIn || pin || setup) return null;
+        if (loggingIn || pin || setup || kitchen) return null;
         return '/login';
       }
 
+      if (session.isKitchenSession) {
+        return kitchen ? null : '/kitchen';
+      }
+
       if (AppConfig.offlineOnly) {
+        if (kitchen) return '/home';
         if (loggingIn || splash || pin || setup || blocked) {
           return '/home';
         }
@@ -78,6 +85,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (_, __) => const PosBlockedScreen(),
       ),
       GoRoute(path: '/home', builder: (_, __) => const ShellScreen()),
+      GoRoute(
+        path: '/kitchen',
+        builder: (_, __) => const KitchenStationScreen(),
+      ),
     ],
   );
 });
