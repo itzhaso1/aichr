@@ -389,6 +389,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
 
       ref.read(cartControllerProvider.notifier).clear();
       _checkoutClientRef = null;
+      ref.read(invoicesRevisionProvider.notifier).state++;
       if (!mounted) return;
 
       await showDialog<void>(
@@ -406,7 +407,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
                     localId: result.invoiceLocalId,
                   );
               if (invoice == null) {
-                throw const PrinterFailure('الفاتورة غير موجودة للطباعة.');
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'تم حفظ الفاتورة ${result.invoiceNumber}. راجع تبويب الفواتير.',
+                    ),
+                  ),
+                );
+                return;
               }
               final printer = await ref.read(
                 printerServiceFutureProvider.future,
@@ -416,16 +425,20 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    printResult.success
+                    printResult.printed
                         ? 'تمت الطباعة. الفاتورة ${result.invoiceNumber}'
-                        : 'اكتمل البيع. ${printResult.message}',
+                        : printResult.message,
                   ),
                 ),
               );
             } catch (e) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('اكتمل البيع. تعذر الطباعة: $e')),
+                SnackBar(
+                  content: Text(
+                    'تم حفظ الفاتورة ${result.invoiceNumber}. يمكنك طباعتها لاحقاً من تبويب الفواتير.',
+                  ),
+                ),
               );
             }
           },
@@ -1658,18 +1671,24 @@ class _SuccessOrderDialog extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             const Text(
-              'تم إنشاء الطلب بنجاح',
+              'تم حفظ الفاتورة',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 4),
             Text(
-              'رقم الطلب: #$orderNumber',
+              'رقم الفاتورة: $orderNumber',
               style: const TextStyle(color: HasimColors.muted),
             ),
-            const SizedBox(height: 18),
-            HsPrimaryButton(label: 'طباعة الفاتورة', onPressed: onPrint),
             const SizedBox(height: 8),
-            HsOutlineButton(label: 'بدون فاتورة', onPressed: onContinue),
+            const Text(
+              'الفاتورة محفوظة في تبويب الفواتير حتى بدون طابعة.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: HasimColors.muted),
+            ),
+            const SizedBox(height: 18),
+            HsPrimaryButton(label: 'تم', onPressed: onContinue),
+            const SizedBox(height: 8),
+            HsOutlineButton(label: 'طباعة الآن (اختياري)', onPressed: onPrint),
           ],
         ),
       ),

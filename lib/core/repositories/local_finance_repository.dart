@@ -12,33 +12,55 @@ class LocalFinanceRepository {
 
   final AppDatabase _db;
 
-  Future<List<Map<String, dynamic>>> listInvoices({
-    required int workspaceId,
-    DateTime? onDate,
-  }) async {
-    if (workspaceId <= 0) return const [];
-    final rows = await (_db.select(_db.localInvoices)
-          ..where((t) => t.workspaceId.equals(workspaceId))
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-        .get();
-    final out = <Map<String, dynamic>>[];
-    for (final row in rows) {
-      if (onDate != null && !_sameDay(row.createdAt, onDate)) continue;
-      out.add(_invoiceToMap(row));
+  Future<List<LocalInvoice>> _queryRows({int? workspaceId}) {
+    final query = _db.select(_db.localInvoices)
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (workspaceId != null && workspaceId > 0) {
+      query.where((t) => t.workspaceId.equals(workspaceId));
     }
-    return out;
+    return query.get();
+  }
+
+  Future<List<Map<String, dynamic>>> listInvoices({
+    int? workspaceId,
+    DateTime? onDate,
+    bool fallbackAllWorkspaces = false,
+  }) async {
+    var rows = await _queryRows(workspaceId: workspaceId);
+    if (rows.isEmpty && fallbackAllWorkspaces) {
+      rows = await _queryRows();
+    }
+    if (onDate != null) {
+      final day = [
+        for (final row in rows)
+          if (_sameDay(row.createdAt, onDate)) row,
+      ];
+      if (day.isNotEmpty) {
+        return [for (final row in day) _invoiceToMap(row)];
+      }
+      // Strict callers (daily reports) keep an empty day. The invoices tab
+      // passes [fallbackAllWorkspaces] so a timezone miss still shows sales.
+      if (!fallbackAllWorkspaces) return const [];
+    }
+    return [for (final row in rows) _invoiceToMap(row)];
   }
 
   Future<Map<String, dynamic>?> getInvoice({
-    required int workspaceId,
+    int? workspaceId,
     required String localId,
   }) async {
-    final row = await (_db.select(_db.localInvoices)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) & t.localId.equals(localId)))
+    if (workspaceId != null && workspaceId > 0) {
+      final row = await (_db.select(_db.localInvoices)
+            ..where((t) =>
+                t.workspaceId.equals(workspaceId) & t.localId.equals(localId)))
+          .getSingleOrNull();
+      if (row != null) return _invoiceToMap(row);
+    }
+    final any = await (_db.select(_db.localInvoices)
+          ..where((t) => t.localId.equals(localId)))
         .getSingleOrNull();
-    if (row == null) return null;
-    return _invoiceToMap(row);
+    if (any == null) return null;
+    return _invoiceToMap(any);
   }
 
   Future<Map<String, dynamic>?> getInvoiceByServerId({
@@ -262,7 +284,12 @@ class LocalFinanceRepository {
   bool _sameDay(DateTime a, DateTime b) {
     final la = a.toLocal();
     final lb = b.toLocal();
-    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+    if (la.year == lb.year && la.month == lb.month && la.day == lb.day) {
+      return true;
+    }
+    final ua = a.toUtc();
+    final ub = b.toUtc();
+    return ua.year == ub.year && ua.month == ub.month && ua.day == ub.day;
   }
 
   Map<String, dynamic> _safeMap(String raw) {

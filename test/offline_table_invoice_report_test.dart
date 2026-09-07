@@ -137,6 +137,12 @@ void main() {
     expect(asDoubleOr(invoices.single['total_amount']), 15);
     expect(invoices.single['items'], isNotEmpty);
 
+    final listedWithoutDate = await finance.listInvoices(
+      workspaceId: 1,
+      fallbackAllWorkspaces: true,
+    );
+    expect(listedWithoutDate, hasLength(1));
+
     final daily = await reports.daily(workspaceId: 1, date: DateTime.now());
     expect(daily['summary']['invoices_count'], 1);
     expect(asDoubleOr(daily['summary']['invoice_sales_total']), 15);
@@ -149,6 +155,27 @@ void main() {
         .timeout(const Duration(seconds: 2));
     expect(daily['summary']['invoices_count'], 0);
     expect(daily['source'], 'local_sqlite');
+  });
+
+  test('offline invoices tab can find a sale saved under another workspace id',
+      () async {
+    final now = DateTime.now();
+    await db.into(db.localInvoices).insert(
+          LocalInvoicesCompanion.insert(
+            localId: 'inv-other-ws',
+            workspaceId: 42,
+            deviceId: 'dev-1',
+            invoiceNumber: const Value('INV-OTHER'),
+            totalAmount: const Value(2500),
+            createdAt: now,
+          ),
+        );
+    final found = await finance.listInvoices(
+      workspaceId: 900001,
+      fallbackAllWorkspaces: true,
+    );
+    expect(found, hasLength(1));
+    expect(found.single['invoice_number'], 'INV-OTHER');
   });
 }
 

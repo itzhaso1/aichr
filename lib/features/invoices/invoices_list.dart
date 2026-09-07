@@ -25,14 +25,13 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   List<Map<String, dynamic>> _invoices = const [];
   var _loading = true;
   String? _error;
-  late DateTime _date;
+  DateTime? _dateFilter;
   Map<String, dynamic>? _selected;
   String? _workspaceName;
 
   @override
   void initState() {
     super.initState();
-    _date = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _load();
     });
@@ -46,7 +45,9 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     }
   }
 
-  String get _dateQuery => DateFormat('yyyy-MM-dd').format(_date);
+  String get _dateQuery => _dateFilter == null
+      ? 'كل الفواتير'
+      : DateFormat('yyyy-MM-dd').format(_dateFilter!);
 
   Future<void> _load() async {
     if (!mounted) return;
@@ -60,14 +61,13 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
     final session = ref.read(authControllerProvider).valueOrNull;
 
     try {
-      final local = workspaceId != null && workspaceId > 0
-          ? await finance
-              .listInvoices(
-                workspaceId: workspaceId,
-                onDate: _date,
-              )
-              .timeout(const Duration(seconds: 5))
-          : const <Map<String, dynamic>>[];
+      final local = await finance
+          .listInvoices(
+            workspaceId: workspaceId,
+            onDate: _dateFilter,
+            fallbackAllWorkspaces: true,
+          )
+          .timeout(const Duration(seconds: 5));
       if (!mounted) return;
       setState(() {
         _invoices = local;
@@ -88,12 +88,12 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: _dateFilter ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
     if (picked == null) return;
-    setState(() => _date = picked);
+    setState(() => _dateFilter = picked);
     await _load();
   }
 
@@ -129,8 +129,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            reprint
-                ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
+            result.printed
+                ? (reprint ? 'تمت إعادة الطباعة.' : 'تمت الطباعة.')
                 : result.message,
           ),
         ),
@@ -149,6 +149,9 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       if (next != prev && next != null && next > 0) {
         _load();
       }
+    });
+    ref.listen<int>(invoicesRevisionProvider, (prev, next) {
+      if (prev != next) _load();
     });
     try {
       return _buildBody();
@@ -186,7 +189,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'فواتير محلية من هذا الجهاز.',
+                      'تُحفظ الفواتير على هذا الجهاز حتى بدون طابعة.',
                       style: const TextStyle(
                         fontSize: 12,
                         color: HasimColors.muted,
@@ -200,6 +203,16 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                 icon: const Icon(Icons.calendar_today, size: 16),
                 label: Text(_dateQuery),
               ),
+              if (_dateFilter != null) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () async {
+                    setState(() => _dateFilter = null);
+                    await _load();
+                  },
+                  child: const Text('الكل'),
+                ),
+              ],
             ],
           ),
         ),
@@ -220,9 +233,9 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
               ? const Padding(
                   padding: EdgeInsets.all(16),
                   child: HsEmpty(
-                    title: 'لا توجد فواتير لهذا التاريخ.',
+                    title: 'لا توجد فواتير محفوظة بعد.',
                     subtitle:
-                        'الفواتير المحلية تظهر هنا بعد إغلاق الطاولة أو طلب خارجي.',
+                        'بعد إغلاق الطاولة أو الدفع من الكاشير تُحفظ الفاتورة هنا تلقائياً، حتى لو لم توجد طابعة.',
                   ),
                 )
               : _selected != null

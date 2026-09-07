@@ -1098,12 +1098,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       final invoice = closed['invoice'] is Map
           ? Map<String, dynamic>.from(closed['invoice'] as Map)
           : null;
-      // Sync in background — show invoice dialog immediately.
-      // ignore: unawaited_futures
-      ref.read(posSyncCoordinatorProvider).flushPendingOrders(
-            workspaceId: workspaceId,
-            deviceId: deviceId,
-          );
+      ref.read(invoicesRevisionProvider.notifier).state++;
       if (invoice != null) {
         await _afterCloseInvoiceDialog(invoice);
       } else {
@@ -1125,19 +1120,20 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('تم إغلاق الطاولة'),
+        title: const Text('تم حفظ الفاتورة'),
         content: Text(
-          'تم إنشاء الفاتورة ${invoice['invoice_number'] ?? invoice['id']}\n'
-          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}',
+          'الفاتورة ${invoice['invoice_number'] ?? invoice['id']} محفوظة في تبويب الفواتير.\n'
+          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}\n'
+          'الطباعة اختيارية ولا تحتاج طابعة الآن.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'skip'),
-            child: const Text('تم بدون طباعة'),
-          ),
           FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'skip'),
+            child: const Text('تم'),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(ctx, 'print'),
-            child: const Text('طباعة الفاتورة'),
+            child: const Text('طباعة الآن'),
           ),
         ],
       ),
@@ -1166,14 +1162,19 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result.success ? 'تمت الطباعة.' : result.message,
+            result.printed ? 'تمت الطباعة.' : result.message,
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تم حفظ الفاتورة. يمكنك طباعتها لاحقاً من تبويب الفواتير.',
+          ),
+        ),
+      );
     }
   }
 

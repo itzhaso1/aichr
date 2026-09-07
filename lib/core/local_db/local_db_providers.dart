@@ -79,6 +79,9 @@ final localFinanceRepositoryProvider = Provider<LocalFinanceRepository>((ref) {
   return LocalFinanceRepository(ref.watch(appDatabaseProvider));
 });
 
+/// Bumped after a local sale so the invoices tab reloads without sync.
+final invoicesRevisionProvider = StateProvider<int>((ref) => 0);
+
 final syncPullApplierProvider = Provider<SyncPullApplier>((ref) {
   return SyncPullApplier(
     ref.watch(appDatabaseProvider),

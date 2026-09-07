@@ -48,10 +48,22 @@ class PrinterProfile {
 }
 
 class PrintJobResult {
-  const PrintJobResult.ok() : success = true, message = 'تمت الطباعة.';
-  const PrintJobResult.fail(this.message) : success = false;
+  const PrintJobResult.ok()
+      : success = true,
+        printed = true,
+        message = 'تمت الطباعة.';
+
+  /// Invoice is already saved. Nothing is sent to hardware.
+  const PrintJobResult.savedWithoutPrinter(this.message)
+      : success = true,
+        printed = false;
+
+  const PrintJobResult.fail(this.message)
+      : success = false,
+        printed = false;
 
   final bool success;
+  final bool printed;
   final String message;
 }
 
@@ -158,10 +170,8 @@ class UnconfiguredPrinterGateway implements PrinterTransportGateway {
 
   @override
   Future<PrintJobResult> send(Uint8List bytes, PrinterProfile profile) async {
-    return PrintJobResult.fail(
-      'الطابعة غير متصلة أو غير مُعدة. '
-      'اضبط الطابعة من الإعدادات (Bluetooth / USB / Network). '
-      'لا يتم ادعاء نجاح الطباعة بدون جهاز حقيقي.',
+    return const PrintJobResult.fail(
+      'الطابعة غير متصلة. الفاتورة محفوظة ويمكن طباعتها لاحقاً من تبويب الفواتير.',
     );
   }
 }
@@ -304,22 +314,27 @@ class PrinterService {
     return _gateway.send(bytes, profile);
   }
 
+  static const savedWithoutPrinterMessage =
+      'تم حفظ الفاتورة. لا توجد طابعة متصلة — يمكنك طباعتها لاحقاً من تبويب الفواتير.';
+
   Future<PrintJobResult> printInvoice(Map<String, dynamic> invoice) async {
     final profile = selected;
-    if (profile == null) {
-      return const PrintJobResult.fail(
-        'لم يتم اختيار طابعة. افتح إعدادات الطباعة أولًا.',
-      );
-    }
-    if (profile.address == null || profile.address!.trim().isEmpty) {
-      return const PrintJobResult.fail(
-        'عنوان الطابعة فارغ (IP / MAC / USB). الطابعة تعتبر غير متصلة.',
+    if (profile == null ||
+        profile.address == null ||
+        profile.address!.trim().isEmpty) {
+      return const PrintJobResult.savedWithoutPrinter(
+        savedWithoutPrinterMessage,
       );
     }
     final bytes = EscPosReceiptBuilder(
       charsPerLine: profile.paperChars,
     ).buildInvoice(invoice);
-    return _gateway.send(bytes, profile);
+    final sent = await _gateway.send(bytes, profile);
+    if (sent.printed) return sent;
+    if (sent.success) return sent;
+    return PrintJobResult.savedWithoutPrinter(
+      'تم حفظ الفاتورة. تعذر الوصول للطابعة الآن. يمكنك إعادة الطباعة لاحقاً من تبويب الفواتير.',
+    );
   }
 
   Future<List<PrinterProfile>> discover(PrinterTransport transport) {
