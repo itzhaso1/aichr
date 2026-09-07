@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/audio/menu_sound_service.dart';
@@ -12,10 +13,13 @@ import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/local_auth_service.dart';
 import '../../core/pos/application/pos_providers.dart';
+import '../../core/pos/domain/pricing_service.dart';
 import '../../core/pos/pos_errors.dart';
 import '../../core/printing/printer_service.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/theme/hasim_radius.dart';
+import '../../core/theme/hasim_spacing.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../cart/cart_controller.dart';
@@ -40,6 +44,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   final _address = TextEditingController();
   PrinterTransport _transport = PrinterTransport.network;
   List<LocalUser> _users = const [];
+  String? _storeName;
+  LocalShift? _currentOpenShift;
 
   Map<String, dynamic> get _perms => CashierPermissions.resolve(
     ref.read(cashierPermissionsProvider),
@@ -73,6 +79,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     }
     if (!mounted) return;
     setState(() {
+      _storeName = store?.name;
       if (settings != null) {
         _tax.text = asDoubleOr(settings['tax_rate']).toStringAsFixed(2);
         _currency.text = '${settings['currency'] ?? 'SAR'}';
@@ -96,6 +103,21 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       _ready = true;
     });
     await _refreshUsers();
+    await _refreshOpenShift();
+  }
+
+  Future<void> _refreshOpenShift() async {
+    final workspaceId = ref.read(workspaceIdProvider);
+    LocalShift? open;
+    if (workspaceId != null) {
+      try {
+        open = await ref.read(shiftServiceProvider).currentOpen(workspaceId);
+      } catch (_) {
+        open = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _currentOpenShift = open);
   }
 
   Future<void> _refreshUsers() async {
@@ -188,7 +210,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('فتح وردية'),
+        title: const Text('افتتاح الكاش'),
         content: TextField(
           controller: opening,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -201,11 +223,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('فتح'),
+            child: const Text('افتتاح'),
           ),
         ],
       ),
     );
+    final openingCash = double.tryParse(opening.text) ?? 0;
+    opening.dispose();
     if (ok != true) return;
     try {
       final id = await ref
@@ -213,17 +237,18 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           .open(
             workspaceId: workspaceId,
             userId: userId,
-            openingCash: double.tryParse(opening.text) ?? 0,
+            openingCash: openingCash,
             permissions: ref
                 .read(authControllerProvider)
                 .valueOrNull
                 ?.permissions,
           );
       ref.read(currentShiftIdProvider.notifier).state = id;
+      await _refreshOpenShift();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('تم فتح الوردية.')));
+      ).showSnackBar(const SnackBar(content: Text('تم افتتاح الكاش.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -242,14 +267,14 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('لا توجد وردية مفتوحة.')));
+      ).showSnackBar(const SnackBar(content: Text('لا يوجد كاش مفتوح.')));
       return;
     }
     final actual = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('إغلاق الوردية'),
+        title: const Text('إغلاق الكاش'),
         content: TextField(
           controller: actual,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -267,6 +292,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ],
       ),
     );
+    final actualCash = double.tryParse(actual.text) ?? 0;
+    actual.dispose();
     if (ok != true) return;
     try {
       final result = await ref
@@ -274,13 +301,14 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           .close(
             workspaceId: workspaceId,
             shiftId: shiftId,
-            actualCash: double.tryParse(actual.text) ?? 0,
+            actualCash: actualCash,
             permissions: ref
                 .read(authControllerProvider)
                 .valueOrNull
                 ?.permissions,
           );
       ref.read(currentShiftIdProvider.notifier).state = null;
+      await _refreshOpenShift();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -606,6 +634,499 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     }
   }
 
+  String _formatOpenedAt(DateTime at) {
+    return DateFormat('yyyy/MM/dd  HH:mm').format(at.toLocal());
+  }
+
+  ({Color background, Color foreground}) _roleTone(String role) {
+    if (LocalAuthService.isKitchenRole(role)) {
+      return (
+        background: HasimColors.warningSoft,
+        foreground: HasimColors.warning,
+      );
+    }
+    final value = role.trim().toLowerCase();
+    if (value == 'admin' || value == 'manager') {
+      return (
+        background: HasimColors.brandSoft,
+        foreground: HasimColors.brandDark,
+      );
+    }
+    return (background: HasimColors.ctaSoft, foreground: HasimColors.ctaDark);
+  }
+
+  Widget _infoBanner({
+    required IconData icon,
+    required String text,
+    Color background = HasimColors.brandSoft,
+    Color foreground = HasimColors.brandDark,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(HasimRadius.md),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: foreground),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: foreground,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerCard() {
+    return HsCard(
+      color: HasimColors.ctaDark,
+      borderColor: HasimColors.ctaDark,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.settings_outlined,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'لوحة التحكم',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'إدارة النظام والتفضيلات العامة',
+                  style: TextStyle(fontSize: 12, color: Color(0xD9FFFFFF)),
+                ),
+              ],
+            ),
+          ),
+          if (_storeName != null && _storeName!.trim().isNotEmpty)
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.storefront_outlined,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _storeName!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'نقطة بيع محلية',
+                    style: TextStyle(fontSize: 11, color: Color(0xD9FFFFFF)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _usersCard() {
+    return HsSectionCard(
+      icon: Icons.groups_outlined,
+      iconBackground: HasimColors.brandSoft,
+      iconColor: HasimColors.brandDark,
+      title: 'حسابات الكاشير والشيف',
+      subtitle:
+          'كل مستخدم يدخل بإيميل وكلمة مرور. الصلاحيات تُحدد لكل شخص بشكل مستقل من تبويب المستخدمون.',
+      children: [
+        if (_users.isEmpty)
+          const Text(
+            'لا يوجد مستخدمون بعد.',
+            style: TextStyle(fontSize: 12, color: HasimColors.muted),
+          )
+        else
+          for (final user in _users)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          user.username,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: HasimColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  HsBadge(
+                    label: LocalAuthService.roleLabelAr(user.role),
+                    background: _roleTone(user.role).background,
+                    foreground: _roleTone(user.role).foreground,
+                  ),
+                ],
+              ),
+            ),
+        HsOutlineButton(
+          label: 'إدارة المستخدمين والصلاحيات',
+          icon: Icons.manage_accounts_outlined,
+          onPressed: () => requestPosShellTab(ref, PosShellTab.users),
+        ),
+        HsPrimaryButton(
+          label: 'إنشاء حساب كاشير أو شيف',
+          icon: Icons.person_add_alt_1_outlined,
+          onPressed: _createStaffUser,
+        ),
+      ],
+    );
+  }
+
+  Widget _cashCard() {
+    final open = _currentOpenShift;
+    final currency = _currency.text.trim().isEmpty
+        ? 'SAR'
+        : _currency.text.trim();
+    return HsSectionCard(
+      icon: Icons.point_of_sale_outlined,
+      iconBackground: HasimColors.ctaSoft,
+      iconColor: HasimColors.ctaDark,
+      title: 'افتتاح الكاش',
+      subtitle: 'يجب افتتاح الكاش قبل بدء البيع.',
+      highlight: true,
+      children: [
+        if (open != null) ...[
+          _infoBanner(
+            icon: Icons.check_circle_outline,
+            text:
+                'الكاش مفتوح · وقت الافتتاح ${_formatOpenedAt(open.openedAt)}'
+                ' · نقد الافتتاح ${Money.fromCents(open.openingCash).toStringAsFixed(2)} $currency',
+            background: Colors.white,
+            foreground: HasimColors.ctaDark,
+          ),
+        ] else
+          _infoBanner(
+            icon: Icons.info_outline,
+            text: 'افتتاح الكاش مطلوب قبل بدء البيع على هذا الجهاز.',
+            background: Colors.white,
+            foreground: HasimColors.brandDark,
+          ),
+        HsPrimaryButton(
+          label: 'افتتاح الكاش',
+          icon: Icons.lock_open_outlined,
+          onPressed: _openShift,
+        ),
+        HsOutlineButton(
+          label: 'إغلاق الكاش',
+          icon: Icons.lock_outline,
+          onPressed: _closeShift,
+        ),
+      ],
+    );
+  }
+
+  Widget _posSettingsCard({required bool canManage}) {
+    return HsSectionCard(
+      icon: Icons.tune,
+      iconBackground: HasimColors.warningSoft,
+      iconColor: HasimColors.warning,
+      title: 'إعدادات الكاشير المحلية',
+      subtitle: canManage
+          ? 'تُحفظ محلياً على هذا الجهاز (بدون خادم)'
+          : 'عرض فقط — تحتاج menu.manage للتعديل',
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _tax,
+                enabled: canManage && _ready && !_savingPos,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'نسبة الضريبة %',
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _currency,
+                enabled: canManage && _ready && !_savingPos,
+                decoration: const InputDecoration(
+                  labelText: 'العملة',
+                  isDense: true,
+                ),
+              ),
+            ),
+          ],
+        ),
+        HsToggleRow(
+          label: 'صوت طلبات المنيو',
+          value: _sound,
+          onChanged: (!canManage || !_ready || _savingPos)
+              ? null
+              : (v) => setState(() => _sound = v),
+        ),
+        HsToggleRow(
+          label: 'تفعيل التوصيل',
+          value: _delivery,
+          onChanged: (!canManage || !_ready || _savingPos)
+              ? null
+              : (v) => setState(() => _delivery = v),
+        ),
+        if (canManage)
+          HsPrimaryButton(
+            label: _savingPos ? 'جاري الحفظ…' : 'حفظ إعدادات الكاشير',
+            icon: Icons.save_outlined,
+            onPressed: (!_ready || _savingPos) ? null : _savePosSettings,
+          ),
+      ],
+    );
+  }
+
+  Widget _stationsCard({
+    required bool canViewReports,
+    required bool canUseKitchen,
+  }) {
+    return HsSectionCard(
+      icon: Icons.assessment_outlined,
+      iconBackground: HasimColors.brandSoft,
+      iconColor: HasimColors.brandDark,
+      title: 'التقارير والمطبخ',
+      subtitle:
+          'التقارير والمطبخ صفحتان مستقلتان. صلاحية الدخول تُحدد لكل مستخدم من تبويب المستخدمون.',
+      children: [
+        if (canViewReports)
+          HsOutlineButton(
+            label: 'فتح التقارير',
+            icon: Icons.bar_chart_outlined,
+            onPressed: () {
+              final router = GoRouter.maybeOf(context);
+              if (router != null) {
+                context.go('/reports');
+              } else {
+                requestPosShellTab(ref, PosShellTab.reports);
+              }
+            },
+          ),
+        if (canUseKitchen)
+          HsOutlineButton(
+            label: 'فتح المطبخ',
+            icon: Icons.soup_kitchen_outlined,
+            onPressed: () {
+              final router = GoRouter.maybeOf(context);
+              if (router != null) {
+                context.go('/kitchen');
+              } else {
+                requestPosShellTab(ref, PosShellTab.kitchen);
+              }
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _backupCard() {
+    return HsSectionCard(
+      icon: Icons.sd_storage_outlined,
+      iconBackground: HasimColors.ctaSoft,
+      iconColor: HasimColors.ctaDark,
+      title: 'نسخة احتياطية محلية',
+      subtitle: 'تصدير واستعادة بيانات هذا الجهاز.',
+      children: [
+        HsPrimaryButton(
+          label: 'تصدير Backup',
+          icon: Icons.file_upload_outlined,
+          onPressed: _exportBackup,
+        ),
+        HsOutlineButton(
+          label: 'استعادة آخر نسخة',
+          icon: Icons.file_download_outlined,
+          onPressed: _restoreBackup,
+        ),
+      ],
+    );
+  }
+
+  Widget _tablesCard() {
+    return HsSectionCard(
+      icon: Icons.table_restaurant_outlined,
+      iconBackground: HasimColors.ctaSoft,
+      iconColor: HasimColors.ctaDark,
+      title: 'الطاولات',
+      subtitle: 'إضافة طاولة محلية لهذا الجهاز.',
+      children: [
+        HsOutlineButton(
+          label: 'إضافة طاولة محلية',
+          icon: Icons.add,
+          onPressed: _addLocalTable,
+        ),
+      ],
+    );
+  }
+
+  Widget _soundCard() {
+    return HsSectionCard(
+      icon: Icons.volume_up_outlined,
+      iconBackground: HasimColors.warningSoft,
+      iconColor: HasimColors.warning,
+      title: 'اختبار الصوت',
+      subtitle: 'تشغيل عينة صوت طلب جديد.',
+      children: [
+        HsOutlineButton(
+          label: 'تشغيل عينة',
+          icon: Icons.play_arrow_rounded,
+          onPressed: () => ref.read(menuSoundServiceProvider).playNewOrder(),
+        ),
+      ],
+    );
+  }
+
+  Widget _realtimeCard() {
+    return HsSectionCard(
+      icon: Icons.wifi_tethering,
+      iconBackground: HasimColors.brandSoft,
+      iconColor: HasimColors.brandDark,
+      title: 'Realtime',
+      subtitle:
+          'Polling هو المصدر الافتراضي. Pusher/Reverb لن يُفعَّل بدون credentials.',
+      children: [
+        Text(
+          'الوضع الحالي: ${ref.watch(posRealtimeModeProvider)}',
+          style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+        ),
+      ],
+    );
+  }
+
+  Widget _printerCard() {
+    return HsSectionCard(
+      icon: Icons.print_outlined,
+      iconBackground: HasimColors.ctaSoft,
+      iconColor: HasimColors.ctaDark,
+      title: 'إعدادات الطابعة (ESC/POS)',
+      subtitle: _profile == null
+          ? 'غير مُعدّة'
+          : (_profile!.address == null || _profile!.address!.isEmpty
+                ? 'محفوظة بدون عنوان (غير متصلة)'
+                : 'عنوان محفوظ — الإرسال يحتاج بوابة Native حقيقية'),
+      children: [
+        TextField(
+          controller: _name,
+          decoration: const InputDecoration(
+            labelText: 'اسم الطابعة',
+            isDense: true,
+          ),
+        ),
+        DropdownButtonFormField<PrinterTransport>(
+          value: _transport,
+          decoration: const InputDecoration(
+            labelText: 'نوع الاتصال',
+            isDense: true,
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: PrinterTransport.network,
+              child: Text('Network'),
+            ),
+            DropdownMenuItem(
+              value: PrinterTransport.bluetooth,
+              child: Text('Bluetooth'),
+            ),
+            DropdownMenuItem(value: PrinterTransport.usb, child: Text('USB')),
+            DropdownMenuItem(
+              value: PrinterTransport.system,
+              child: Text('System'),
+            ),
+          ],
+          onChanged: (v) {
+            if (v != null) setState(() => _transport = v);
+          },
+        ),
+        TextField(
+          controller: _address,
+          decoration: const InputDecoration(
+            labelText: 'العنوان (IP / MAC / USB path)',
+            isDense: true,
+            hintText: 'مثال: 192.168.1.50',
+          ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: HsPrimaryButton(
+                label: 'حفظ الطابعة',
+                onPressed: _savePrinter,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: HsOutlineButton(
+                label: 'Test Print',
+                onPressed: _testPrint,
+              ),
+            ),
+          ],
+        ),
+        const Text(
+          'طابعة الشبكة ترسل ESC/POS عبر TCP:9100. Bluetooth/USB يحتاج Native لاحقاً. فشل الطباعة لا يلغي البيع.',
+          style: TextStyle(fontSize: 11, color: HasimColors.muted),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final canManage = CashierPermissions.canManageMenu(
@@ -640,384 +1161,27 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     );
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(HasimSpacing.lg),
       children: [
-        const Text(
-          'الإعدادات',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 12),
+        _headerCard(),
+        const SizedBox(height: HasimSpacing.md),
         HsSoftGrid(
-          minTileWidth: 320,
+          minTileWidth: 300,
           maxColumns: 3,
           children: [
+            if (canManageUsers) _usersCard(),
+            _cashCard(),
+            _posSettingsCard(canManage: canManage),
             if (canViewReports || canUseKitchen)
-              HsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'محطات العمل',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'التقارير والمطبخ صفحتان مستقلتان. صلاحية الدخول تُحدد لكل مستخدم من تبويب المستخدمون.',
-                      style: TextStyle(fontSize: 12, color: HasimColors.muted),
-                    ),
-                    if (canViewReports) ...[
-                      const SizedBox(height: 8),
-                      HsOutlineButton(
-                        label: 'فتح التقارير',
-                        onPressed: () {
-                          final router = GoRouter.maybeOf(context);
-                          if (router != null) {
-                            context.go('/reports');
-                          } else {
-                            requestPosShellTab(ref, PosShellTab.reports);
-                          }
-                        },
-                      ),
-                    ],
-                    if (canUseKitchen) ...[
-                      const SizedBox(height: 8),
-                      HsOutlineButton(
-                        label: 'فتح المطبخ',
-                        onPressed: () {
-                          final router = GoRouter.maybeOf(context);
-                          if (router != null) {
-                            context.go('/kitchen');
-                          } else {
-                            requestPosShellTab(ref, PosShellTab.kitchen);
-                          }
-                        },
-                      ),
-                    ],
-                  ],
-                ),
+              _stationsCard(
+                canViewReports: canViewReports,
+                canUseKitchen: canUseKitchen,
               ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'الوردية والصندوق',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 8),
-                  HsPrimaryButton(label: 'فتح وردية', onPressed: _openShift),
-                  const SizedBox(height: 8),
-                  HsOutlineButton(
-                    label: 'إغلاق الوردية',
-                    onPressed: _closeShift,
-                  ),
-                ],
-              ),
-            ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'نسخة احتياطية محلية',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 8),
-                  HsPrimaryButton(
-                    label: 'تصدير Backup',
-                    onPressed: _exportBackup,
-                  ),
-                  const SizedBox(height: 8),
-                  HsOutlineButton(
-                    label: 'استعادة آخر نسخة',
-                    onPressed: _restoreBackup,
-                  ),
-                  if (canCreateTables) ...[
-                    const SizedBox(height: 8),
-                    HsOutlineButton(
-                      label: 'إضافة طاولة محلية',
-                      onPressed: _addLocalTable,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            if (canManageUsers)
-              HsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'حسابات الكاشير والشيف',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'كل مستخدم يدخل بإيميل وكلمة مرور. الصلاحيات تُحدد لكل شخص بشكل مستقل من تبويب المستخدمون.',
-                      style: TextStyle(fontSize: 12, color: HasimColors.muted),
-                    ),
-                    const SizedBox(height: 8),
-                    if (_users.isEmpty)
-                      const Text(
-                        'لا يوجد مستخدمون بعد.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: HasimColors.muted,
-                        ),
-                      )
-                    else
-                      for (final user in _users)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      user.name,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${user.username} · ${LocalAuthService.roleLabelAr(user.role)}',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: HasimColors.muted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              HsBadge(
-                                label: LocalAuthService.roleLabelAr(user.role),
-                                background:
-                                    LocalAuthService.isKitchenRole(user.role)
-                                    ? HasimColors.warningSoft
-                                    : HasimColors.navIdleBg,
-                                foreground: HasimColors.ink,
-                              ),
-                            ],
-                          ),
-                        ),
-                    const SizedBox(height: 8),
-                    HsPrimaryButton(
-                      label: 'إدارة المستخدمين والصلاحيات',
-                      onPressed: () =>
-                          requestPosShellTab(ref, PosShellTab.users),
-                    ),
-                    const SizedBox(height: 8),
-                    HsOutlineButton(
-                      label: 'إنشاء حساب كاشير أو شيف',
-                      onPressed: _createStaffUser,
-                    ),
-                  ],
-                ),
-              ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'إعدادات الكاشير المحلية',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    canManage
-                        ? 'تُحفظ محلياً على هذا الجهاز (بدون خادم)'
-                        : 'عرض فقط — تحتاج menu.manage للتعديل',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: HasimColors.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _tax,
-                    enabled: canManage && _ready && !_savingPos,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'نسبة الضريبة %',
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _currency,
-                    enabled: canManage && _ready && !_savingPos,
-                    decoration: const InputDecoration(
-                      labelText: 'العملة',
-                      isDense: true,
-                    ),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'صوت طلبات المنيو',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    value: _sound,
-                    activeThumbColor: HasimColors.cta,
-                    onChanged: (!canManage || !_ready || _savingPos)
-                        ? null
-                        : (v) => setState(() => _sound = v),
-                  ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'تفعيل التوصيل',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    value: _delivery,
-                    activeThumbColor: HasimColors.cta,
-                    onChanged: (!canManage || !_ready || _savingPos)
-                        ? null
-                        : (v) => setState(() => _delivery = v),
-                  ),
-                  if (canManage)
-                    HsPrimaryButton(
-                      label: _savingPos ? 'جاري الحفظ…' : 'حفظ إعدادات الكاشير',
-                      onPressed: (!_ready || _savingPos)
-                          ? null
-                          : _savePosSettings,
-                    ),
-                ],
-              ),
-            ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'اختبار الصوت',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 8),
-                  HsOutlineButton(
-                    label: 'تشغيل عينة',
-                    onPressed: () =>
-                        ref.read(menuSoundServiceProvider).playNewOrder(),
-                  ),
-                ],
-              ),
-            ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Realtime',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'الوضع الحالي: ${ref.watch(posRealtimeModeProvider)}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: HasimColors.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Polling هو المصدر الافتراضي. Pusher/Reverb لن يُفعَّل بدون credentials.',
-                    style: TextStyle(fontSize: 12, color: HasimColors.muted),
-                  ),
-                ],
-              ),
-            ),
-            HsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'إعدادات الطابعة (ESC/POS)',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'الحالة: ${_profile == null ? 'غير مُعدّة' : (_profile!.address == null || _profile!.address!.isEmpty ? 'محفوظة بدون عنوان (غير متصلة)' : 'عنوان محفوظ — الإرسال يحتاج بوابة Native حقيقية')}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: HasimColors.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _name,
-                    decoration: const InputDecoration(
-                      labelText: 'اسم الطابعة',
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<PrinterTransport>(
-                    value: _transport,
-                    decoration: const InputDecoration(
-                      labelText: 'نوع الاتصال',
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: PrinterTransport.network,
-                        child: Text('Network'),
-                      ),
-                      DropdownMenuItem(
-                        value: PrinterTransport.bluetooth,
-                        child: Text('Bluetooth'),
-                      ),
-                      DropdownMenuItem(
-                        value: PrinterTransport.usb,
-                        child: Text('USB'),
-                      ),
-                      DropdownMenuItem(
-                        value: PrinterTransport.system,
-                        child: Text('System'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) setState(() => _transport = v);
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _address,
-                    decoration: const InputDecoration(
-                      labelText: 'العنوان (IP / MAC / USB path)',
-                      isDense: true,
-                      hintText: 'مثال: 192.168.1.50',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: HsPrimaryButton(
-                          label: 'حفظ الطابعة',
-                          onPressed: _savePrinter,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: HsOutlineButton(
-                          label: 'Test Print',
-                          onPressed: _testPrint,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'طابعة الشبكة ترسل ESC/POS عبر TCP:9100. Bluetooth/USB يحتاج Native لاحقاً. فشل الطباعة لا يلغي البيع.',
-                    style: TextStyle(fontSize: 11, color: HasimColors.muted),
-                  ),
-                ],
-              ),
-            ),
+            _backupCard(),
+            _soundCard(),
+            if (canCreateTables) _tablesCard(),
+            _realtimeCard(),
+            _printerCard(),
           ],
         ),
       ],

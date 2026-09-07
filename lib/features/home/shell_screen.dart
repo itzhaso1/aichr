@@ -331,7 +331,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     if (shiftId == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('افتح وردية أولاً من الإعدادات.')),
+        const SnackBar(content: Text('افتتاح الكاش مطلوب أولاً من الإعدادات.')),
       );
       return;
     }
@@ -436,9 +436,13 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (context) => _SuccessOrderDialog(
-          orderNumber: result.invoiceNumber,
-          tableOccupied: occupiedTable,
+        barrierColor: HasimColors.ink.withValues(alpha: 0.38),
+        builder: (context) => HsInvoiceSuccessDialog(
+          invoiceNumber: result.invoiceNumber,
+          details: [
+            'حُفظت الفاتورة في قاعدة البيانات المحلية.',
+            if (occupiedTable) 'الطاولة أصبحت مشغولة.',
+          ],
           onPrint: () async {
             Navigator.pop(context);
             try {
@@ -484,7 +488,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               );
             }
           },
-          onContinue: () => Navigator.pop(context),
+          onClose: () => Navigator.pop(context),
         ),
       );
     } catch (e) {
@@ -1769,68 +1773,6 @@ class _OrderTypeChip extends StatelessWidget {
             fontWeight: FontWeight.w700,
             color: selected ? Colors.white : HasimColors.ink,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SuccessOrderDialog extends StatelessWidget {
-  const _SuccessOrderDialog({
-    required this.orderNumber,
-    required this.onPrint,
-    required this.onContinue,
-    this.tableOccupied = false,
-  });
-
-  final String orderNumber;
-  final VoidCallback onPrint;
-  final VoidCallback onContinue;
-  final bool tableOccupied;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(HasimRadius.lg),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: const BoxDecoration(
-                color: HasimColors.ctaSoft,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check, color: HasimColors.cta),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'تم حفظ الفاتورة',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'رقم الفاتورة: $orderNumber',
-              style: const TextStyle(color: HasimColors.muted),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              tableOccupied
-                  ? 'الفاتورة محفوظة في تبويب الفواتير، والطاولة أصبحت مشغولة فوراً.'
-                  : 'الفاتورة محفوظة في تبويب الفواتير حتى بدون طابعة.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: HasimColors.muted),
-            ),
-            const SizedBox(height: 18),
-            HsPrimaryButton(label: 'تم', onPressed: onContinue),
-            const SizedBox(height: 8),
-            HsOutlineButton(label: 'طباعة الآن (اختياري)', onPressed: onPrint),
-          ],
         ),
       ),
     );

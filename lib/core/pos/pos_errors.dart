@@ -30,7 +30,10 @@ class InvalidReturnQuantity extends PosException {
 
 class ShiftNotOpen extends PosException {
   const ShiftNotOpen()
-    : super('ShiftNotOpen', 'لا توجد وردية مفتوحة. افتح وردية أولاً.');
+    : super(
+        'ShiftNotOpen',
+        'لا يوجد كاش مفتوح. افتتح الكاش أولاً من الإعدادات.',
+      );
 }
 
 class InvoiceAlreadyPaid extends PosException {

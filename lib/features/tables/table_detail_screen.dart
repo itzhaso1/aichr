@@ -1116,23 +1116,15 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     final choice = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تم حفظ الفاتورة'),
-        content: Text(
-          'الفاتورة ${invoice['invoice_number'] ?? invoice['id']} محفوظة في تبويب الفواتير.\n'
-          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}\n'
-          'الطباعة اختيارية ولا تحتاج طابعة الآن.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, 'skip'),
-            child: const Text('تم'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'print'),
-            child: const Text('طباعة الآن'),
-          ),
+      barrierColor: HasimColors.ink.withValues(alpha: 0.38),
+      builder: (ctx) => HsInvoiceSuccessDialog(
+        invoiceNumber: '${invoice['invoice_number'] ?? invoice['id'] ?? ''}',
+        details: const [
+          'حُفظت الفاتورة في قاعدة البيانات المحلية.',
+          'تم إغلاق جلسة الطاولة.',
         ],
+        onPrint: () => Navigator.pop(ctx, 'print'),
+        onClose: () => Navigator.pop(ctx, 'skip'),
       ),
     );
     if (choice != 'print') return;

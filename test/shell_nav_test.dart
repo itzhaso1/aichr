@@ -24,6 +24,7 @@ import 'package:hasim_cashier/features/home/shell_screen.dart';
 import 'package:hasim_cashier/features/invoices/invoices_list.dart';
 import 'package:hasim_cashier/features/kitchen/kitchen_board.dart';
 import 'package:hasim_cashier/features/reports/daily_reports_panel.dart';
+import 'package:hasim_cashier/features/settings/settings_panel.dart';
 import 'package:hasim_cashier/features/tables/tables_board.dart';
 import 'package:hive/hive.dart';
 
@@ -219,12 +220,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  Future<void> revealSettingsAction(
+    WidgetTester tester,
+    String actionLabel,
+  ) async {
+    final action = find.text(actionLabel);
+    final scrollable = find.descendant(
+      of: find.byType(SettingsPanel),
+      matching: find.byType(Scrollable),
+    );
+    if (scrollable.evaluate().isNotEmpty) {
+      await tester.scrollUntilVisible(
+        action,
+        120,
+        scrollable: scrollable.first,
+      );
+    } else {
+      await tester.ensureVisible(action);
+    }
+    await tester.pump();
+  }
+
   Future<void> openStationFromSettings(
     WidgetTester tester,
     String actionLabel,
   ) async {
     await tapNav(tester, 'الإعدادات');
-    await tester.ensureVisible(find.text(actionLabel));
+    await revealSettingsAction(tester, actionLabel);
     await tester.tap(find.text(actionLabel));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -409,7 +431,7 @@ void main() {
       reason: 'checkout did not persist an invoice. snackbars=$snackTexts',
     );
     expect(
-      find.text('تم حفظ الفاتورة'),
+      find.text('تم حفظ الفاتورة بنجاح'),
       findsOneWidget,
       reason: 'snackbars=$snackTexts invoiceCount=${invoices.length}',
     );
@@ -419,7 +441,7 @@ void main() {
     expect(table.status, 'occupied');
     expect(table.payloadJson.contains('opened_at'), isTrue);
 
-    await tester.tap(find.text('تم'));
+    await tester.tap(find.widgetWithText(HsOutlineButton, 'إغلاق'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -502,7 +524,7 @@ void main() {
       await hoverAndOpen('المستخدمون');
       expect(find.byType(UsersAdminPanel), findsOneWidget);
       await hoverAndOpen('الإعدادات');
-      await tester.ensureVisible(find.text('فتح التقارير'));
+      await revealSettingsAction(tester, 'فتح التقارير');
       await gesture.moveTo(tester.getCenter(find.text('فتح التقارير')));
       await tester.pump();
       await tester.tap(find.text('فتح التقارير'));
@@ -510,7 +532,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(DailyReportsPanel), findsOneWidget);
       await hoverAndOpen('الإعدادات');
-      await tester.ensureVisible(find.text('فتح المطبخ'));
+      await revealSettingsAction(tester, 'فتح المطبخ');
       await tester.tap(find.text('فتح المطبخ'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
@@ -563,8 +585,10 @@ void main() {
     expect(find.byType(HsSoftGrid), findsWidgets);
     expect(find.text('فتح التقارير'), findsOneWidget);
     expect(find.text('فتح المطبخ'), findsOneWidget);
+    expect(find.text('افتتاح الكاش'), findsWidgets);
+    expect(find.text('إغلاق الكاش'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('فتح التقارير'));
+    await revealSettingsAction(tester, 'فتح التقارير');
     await tester.tap(find.text('فتح التقارير'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));

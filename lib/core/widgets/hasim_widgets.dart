@@ -90,50 +90,98 @@ class HsSoftGrid extends StatelessWidget {
   }
 }
 
+const double _kHsButtonHeight = 44;
+
+class _HsPressSurface extends StatefulWidget {
+  const _HsPressSurface({
+    required this.enabled,
+    required this.onTap,
+    required this.builder,
+  });
+
+  final bool enabled;
+  final VoidCallback? onTap;
+  final Widget Function(bool pressed) builder;
+
+  @override
+  State<_HsPressSurface> createState() => _HsPressSurfaceState();
+}
+
+class _HsPressSurfaceState extends State<_HsPressSurface> {
+  var _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: widget.enabled ? (_) => _setPressed(true) : null,
+      onPointerUp: (_) => _setPressed(false),
+      onPointerCancel: (_) => _setPressed(false),
+      child: PosTap(
+        enabled: widget.enabled,
+        onTap: widget.onTap,
+        child: widget.builder(_pressed),
+      ),
+    );
+  }
+}
+
 class HsPrimaryButton extends StatelessWidget {
   const HsPrimaryButton({
     super.key,
     required this.label,
     required this.onPressed,
     this.loading = false,
+    this.icon,
   });
 
   final String label;
   final VoidCallback? onPressed;
   final bool loading;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null && !loading;
-    return PosTap(
+    return _HsPressSurface(
       enabled: enabled,
       onTap: onPressed,
-      child: Container(
-        height: 48,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: enabled
-              ? HasimColors.cta
-              : HasimColors.cta.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(HasimRadius.sm),
-        ),
-        child: loading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
+      builder: (pressed) {
+        final fill = !enabled
+            ? HasimColors.cta.withValues(alpha: 0.45)
+            : pressed
+            ? HasimColors.ctaDark
+            : HasimColors.cta;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          height: _kHsButtonHeight,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(HasimRadius.sm),
+          ),
+          child: loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : _HsButtonLabel(
+                  label: label,
+                  icon: icon,
                   color: Colors.white,
+                  weight: FontWeight.w800,
                 ),
-              )
-            : Text(
-                label,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-      ),
+        );
+      },
     );
   }
 }
@@ -143,35 +191,380 @@ class HsOutlineButton extends StatelessWidget {
     super.key,
     required this.label,
     required this.onPressed,
+    this.icon,
+    this.foreground,
+    this.borderColor,
   });
 
   final String label;
   final VoidCallback? onPressed;
+  final IconData? icon;
+  final Color? foreground;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
-    return PosTap(
+    final fg = foreground ?? HasimColors.ctaDark;
+    final border = borderColor ?? HasimColors.cta;
+    return _HsPressSurface(
       enabled: enabled,
       onTap: onPressed,
-      child: Container(
-        height: 48,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: HasimColors.surface,
-          borderRadius: BorderRadius.circular(HasimRadius.sm),
-          border: Border.all(
-            color: enabled ? HasimColors.cta : HasimColors.border,
+      builder: (pressed) {
+        final bg = pressed ? HasimColors.ctaSoft : HasimColors.surface;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          height: _kHsButtonHeight,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: enabled ? bg : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.sm),
+            border: Border.all(
+              color: enabled ? border : HasimColors.border,
+              width: pressed ? 1.4 : 1,
+            ),
           ),
+          child: _HsButtonLabel(
+            label: label,
+            icon: icon,
+            color: enabled ? fg : HasimColors.muted,
+            weight: FontWeight.w700,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _HsButtonLabel extends StatelessWidget {
+  const _HsButtonLabel({
+    required this.label,
+    required this.color,
+    required this.weight,
+    this.icon,
+  });
+
+  final String label;
+  final Color color;
+  final FontWeight weight;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      textAlign: TextAlign.center,
+      style: TextStyle(fontWeight: weight, color: color, fontSize: 13),
+    );
+    if (icon == null) return text;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 8),
+        Flexible(child: text),
+      ],
+    );
+  }
+}
+
+/// Compact POS settings/section card with a tinted icon and tight spacing.
+class HsSectionCard extends StatelessWidget {
+  const HsSectionCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.children,
+    this.subtitle,
+    this.iconBackground = HasimColors.ctaSoft,
+    this.iconColor = HasimColors.ctaDark,
+    this.highlight = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final List<Widget> children;
+  final Color iconBackground;
+  final Color iconColor;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return HsCard(
+      padding: const EdgeInsets.all(HasimSpacing.md),
+      color: highlight ? HasimColors.ctaSoft : HasimColors.surface,
+      borderColor: highlight
+          ? HasimColors.cta.withValues(alpha: 0.38)
+          : HasimColors.border,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: highlight ? Colors.white : iconBackground,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, size: 18, color: iconColor),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: HasimColors.ink,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.35,
+                          color: HasimColors.muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (children.isNotEmpty) const SizedBox(height: 10),
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0) const SizedBox(height: HasimSpacing.sm),
+            children[i],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Toggle row without Material [SwitchListTile] mouse annotations.
+class HsToggleRow extends StatelessWidget {
+  const HsToggleRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onChanged != null;
+    return PosTap(
+      enabled: enabled,
+      onTap: enabled ? () => onChanged!(!value) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: enabled ? HasimColors.ink : HasimColors.muted,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: 44,
+              height: 24,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: !enabled
+                    ? HasimColors.border
+                    : value
+                    ? HasimColors.cta
+                    : HasimColors.border,
+                borderRadius: BorderRadius.circular(HasimRadius.pill),
+              ),
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 160),
+                alignment: value
+                    ? AlignmentDirectional.centerStart
+                    : AlignmentDirectional.centerEnd,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: enabled ? HasimColors.ctaDark : HasimColors.muted,
+      ),
+    );
+  }
+}
+
+/// Compact invoice-saved success dialog for cashier checkout / table close.
+class HsInvoiceSuccessDialog extends StatelessWidget {
+  const HsInvoiceSuccessDialog({
+    super.key,
+    required this.invoiceNumber,
+    required this.onPrint,
+    required this.onClose,
+    this.details = const ['حُفظت الفاتورة في قاعدة البيانات المحلية.'],
+  });
+
+  final String invoiceNumber;
+  final VoidCallback onPrint;
+  final VoidCallback onClose;
+  final List<String> details;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: HasimColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(HasimRadius.lg),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 92,
+                height: 92,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    const Positioned(
+                      top: 8,
+                      left: 14,
+                      child: _HsSuccessDot(color: HasimColors.warning, size: 7),
+                    ),
+                    const Positioned(
+                      top: 20,
+                      right: 10,
+                      child: _HsSuccessDot(color: HasimColors.cta, size: 6),
+                    ),
+                    const Positioned(
+                      bottom: 14,
+                      left: 8,
+                      child: _HsSuccessDot(color: HasimColors.brand, size: 5),
+                    ),
+                    const Positioned(
+                      bottom: 22,
+                      right: 16,
+                      child: _HsSuccessDot(color: HasimColors.warning, size: 4),
+                    ),
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: const BoxDecoration(
+                        color: HasimColors.ctaSoft,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_rounded,
+                        size: 36,
+                        color: HasimColors.cta,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'تم حفظ الفاتورة بنجاح',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: HasimColors.ctaDark,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'رقم الفاتورة: $invoiceNumber',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: HasimColors.ink,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (final line in details)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    line,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: HasimColors.muted,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              HsPrimaryButton(
+                label: 'طباعة الفاتورة الآن',
+                icon: Icons.print_outlined,
+                onPressed: onPrint,
+              ),
+              const SizedBox(height: 8),
+              HsOutlineButton(
+                label: 'إغلاق',
+                icon: Icons.close,
+                foreground: HasimColors.danger,
+                borderColor: HasimColors.danger.withValues(alpha: 0.45),
+                onPressed: onClose,
+              ),
+            ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HsSuccessDot extends StatelessWidget {
+  const _HsSuccessDot({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
