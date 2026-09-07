@@ -7,8 +7,10 @@ import '../api/cashier_api.dart';
 import '../config/app_config.dart';
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
+import '../pos/table_session_orders.dart';
 import '../local_db/local_ids.dart';
 import '../util/json_numbers.dart';
+import '../util/occupied_duration.dart';
 import 'sync_queue_repository.dart';
 
 /// Tables UI reads/writes through this repository only.
@@ -19,8 +21,8 @@ class TablesRepository {
     this._queue, {
     CashierApiClient? api,
     String Function()? newId,
-  })  : _api = api,
-        _newId = newId ?? (() => const Uuid().v4());
+  }) : _api = api,
+       _newId = newId ?? (() => const Uuid().v4());
 
   final AppDatabase _db;
   final SyncQueueRepository _queue;
@@ -30,14 +32,18 @@ class TablesRepository {
   Future<List<Map<String, dynamic>>> listTables(int workspaceId) async {
     if (workspaceId <= 0) return const [];
     await _backfillMissingServerIds(workspaceId);
-    final rows = await (_db.select(_db.localTables)
-          ..where((t) => t.workspaceId.equals(workspaceId))
-          ..orderBy([(t) => OrderingTerm.asc(t.name)]))
-        .get();
-    final unpaid = await _unpaidOrdersInWorkspace(workspaceId);
+    final rows =
+        await (_db.select(_db.localTables)
+              ..where((t) => t.workspaceId.equals(workspaceId))
+              ..orderBy([(t) => OrderingTerm.asc(t.name)]))
+            .get();
+    final sessionOrders = await _nonCancelledOrdersInWorkspace(workspaceId);
     return [
       for (final row in rows)
-        _rowToBoardMap(row, unpaidOrders: _ordersMatchingTable(row, unpaid)),
+        _rowToBoardMap(
+          row,
+          sessionOrders: _sessionOrdersMatchingTable(row, sessionOrders),
+        ),
     ];
   }
 
@@ -47,13 +53,9 @@ class TablesRepository {
   ) async {
     final row = await _findTable(workspaceId, serverId: tableServerId);
     if (row == null) return null;
-    final unpaid = await _unpaidOrdersForTable(row);
-    final unpaidMaps = await _mapsForOrders(unpaid);
-    return _rowToDetailMap(
-      row,
-      unpaidOrders: unpaid,
-      unpaidOrderMaps: unpaidMaps,
-    );
+    final live = await _liveSessionOrdersForTable(row);
+    final liveMaps = await _mapsForOrders(live);
+    return _rowToDetailMap(row, liveOrders: live, liveOrderMaps: liveMaps);
   }
 
   /// Workspace-scoped local PK so the same server table id can exist in A and B.
@@ -68,29 +70,28 @@ class TablesRepository {
     if (workspaceId <= 0) return null;
     final lid = localId?.trim();
     if (lid != null && lid.isNotEmpty) {
-      final byLocal = await (_db.select(_db.localTables)
-            ..where(
-              (t) =>
-                  t.localId.equals(lid) & t.workspaceId.equals(workspaceId),
-            ))
-          .getSingleOrNull();
+      final byLocal =
+          await (_db.select(_db.localTables)..where(
+                (t) =>
+                    t.localId.equals(lid) & t.workspaceId.equals(workspaceId),
+              ))
+              .getSingleOrNull();
       if (byLocal != null) return byLocal;
     }
     if (serverId != null && serverId > 0) {
-      final byServer = await (_db.select(_db.localTables)
-            ..where(
-              (t) =>
-                  t.workspaceId.equals(workspaceId) &
-                  t.serverId.equals(serverId),
-            ))
-          .getSingleOrNull();
+      final byServer =
+          await (_db.select(_db.localTables)..where(
+                (t) =>
+                    t.workspaceId.equals(workspaceId) &
+                    t.serverId.equals(serverId),
+              ))
+              .getSingleOrNull();
       if (byServer != null) return byServer;
-      return (_db.select(_db.localTables)
-            ..where(
-              (t) =>
-                  t.localId.equals(tableLocalId(workspaceId, serverId)) &
-                  t.workspaceId.equals(workspaceId),
-            ))
+      return (_db.select(_db.localTables)..where(
+            (t) =>
+                t.localId.equals(tableLocalId(workspaceId, serverId)) &
+                t.workspaceId.equals(workspaceId),
+          ))
           .getSingleOrNull();
     }
     return null;
@@ -108,10 +109,13 @@ class TablesRepository {
   }
 
   Future<void> _backfillMissingServerIds(int workspaceId) async {
-    final rows = await (_db.select(_db.localTables)
-          ..where((t) => t.workspaceId.equals(workspaceId)))
-        .get();
-    final missing = [for (final row in rows) if (row.serverId == null) row];
+    final rows = await (_db.select(
+      _db.localTables,
+    )..where((t) => t.workspaceId.equals(workspaceId))).get();
+    final missing = [
+      for (final row in rows)
+        if (row.serverId == null) row,
+    ];
     if (missing.isEmpty) return;
     var next = 0;
     for (final row in rows) {
@@ -124,9 +128,9 @@ class TablesRepository {
       payload['id'] = next;
       payload['name'] = row.name;
       payload['status'] = row.status;
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(row.localId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(row.localId))).write(
         LocalTablesCompanion(
           serverId: Value(next),
           payloadJson: Value(jsonEncode(payload)),
@@ -143,9 +147,9 @@ class TablesRepository {
     if (workspaceId <= 0) return;
     final now = DateTime.now();
     await _db.transaction(() async {
-      final existing = await (_db.select(_db.localTables)
-            ..where((t) => t.workspaceId.equals(workspaceId)))
-          .get();
+      final existing = await (_db.select(
+        _db.localTables,
+      )..where((t) => t.workspaceId.equals(workspaceId))).get();
       final keep = <String>{};
       for (final table in tables) {
         final serverId = asInt(table['id']);
@@ -161,9 +165,9 @@ class TablesRepository {
         }
         // Drop legacy unscoped local_id (table_N) when migrating to w{ws}_table_N.
         if (previous != null && previous.localId != localId) {
-          await (_db.delete(_db.localTables)
-                ..where((t) => t.localId.equals(previous!.localId)))
-              .go();
+          await (_db.delete(
+            _db.localTables,
+          )..where((t) => t.localId.equals(previous!.localId))).go();
         }
         // Preserve richer detail payload when board snapshot is thinner.
         final mergedPayload = _mergePayload(previous?.payloadJson, table);
@@ -171,7 +175,8 @@ class TablesRepository {
         final prevMap = previous == null
             ? const <String, dynamic>{}
             : _safeMap(previous.payloadJson);
-        final offlineOpen = prevMap['session_client_id'] != null &&
+        final offlineOpen =
+            prevMap['session_client_id'] != null &&
             previous?.status == 'occupied' &&
             (table['status'] == 'available' || table['session_id'] == null);
         final status = offlineOpen
@@ -179,8 +184,7 @@ class TablesRepository {
             : '${table['status'] ?? previous?.status ?? 'available'}';
         final sessionServerId = offlineOpen
             ? previous?.sessionServerId
-            : asInt(table['session_id']) ??
-                previous?.sessionServerId;
+            : asInt(table['session_id']) ?? previous?.sessionServerId;
         if (offlineOpen && prevMap['session_client_id'] != null) {
           mergedPayload['session_client_id'] = prevMap['session_client_id'];
           mergedPayload['session_open'] = true;
@@ -188,16 +192,16 @@ class TablesRepository {
             mergedPayload['opened_at'] = prevMap['opened_at'];
           }
         }
-        await _db.into(_db.localTables).insertOnConflictUpdate(
+        await _db
+            .into(_db.localTables)
+            .insertOnConflictUpdate(
               LocalTablesCompanion.insert(
                 localId: localId,
                 workspaceId: workspaceId,
                 serverId: Value(serverId),
                 name: '${table['name'] ?? previous?.name ?? ''}',
                 status: Value(status),
-                capacity: Value(
-                  asInt(table['capacity']) ?? previous?.capacity,
-                ),
+                capacity: Value(asInt(table['capacity']) ?? previous?.capacity),
                 sessionServerId: Value(sessionServerId),
                 payloadJson: Value(jsonEncode(mergedPayload)),
                 updatedAt: now,
@@ -215,12 +219,14 @@ class TablesRepository {
     if (workspaceId <= 0 || tableServerId <= 0) return;
     final now = DateTime.now();
     final localId = tableLocalId(workspaceId, tableServerId);
-    final previous = await (_db.select(_db.localTables)
-          ..where((t) => t.localId.equals(localId)))
-        .getSingleOrNull();
-    final prevMap =
-        previous == null ? const <String, dynamic>{} : _safeMap(previous.payloadJson);
-    final offlineOpen = prevMap['session_client_id'] != null &&
+    final previous = await (_db.select(
+      _db.localTables,
+    )..where((t) => t.localId.equals(localId))).getSingleOrNull();
+    final prevMap = previous == null
+        ? const <String, dynamic>{}
+        : _safeMap(previous.payloadJson);
+    final offlineOpen =
+        prevMap['session_client_id'] != null &&
         previous?.status == 'occupied' &&
         (detail['status'] == 'available' || detail['session_id'] == null);
     final merged = {
@@ -232,7 +238,9 @@ class TablesRepository {
         if (prevMap['opened_at'] != null) 'opened_at': prevMap['opened_at'],
       },
     };
-    await _db.into(_db.localTables).insertOnConflictUpdate(
+    await _db
+        .into(_db.localTables)
+        .insertOnConflictUpdate(
           LocalTablesCompanion.insert(
             localId: localId,
             workspaceId: workspaceId,
@@ -243,9 +251,7 @@ class TablesRepository {
                   ? 'occupied'
                   : '${detail['status'] ?? previous?.status ?? 'available'}',
             ),
-            capacity: Value(
-              asInt(detail['capacity']) ?? previous?.capacity,
-            ),
+            capacity: Value(asInt(detail['capacity']) ?? previous?.capacity),
             sessionServerId: Value(
               offlineOpen
                   ? previous?.sessionServerId
@@ -274,13 +280,8 @@ class TablesRepository {
     final payload = _safeMap(existing.payloadJson);
     final existingClient = '${payload['session_client_id'] ?? ''}';
     if (existing.status == 'occupied' && existingClient.isNotEmpty) {
-      final unpaid = await _unpaidOrdersForTable(existing);
-      final unpaidMaps = await _mapsForOrders(unpaid);
-      return _rowToDetailMap(
-        existing,
-        unpaidOrders: unpaid,
-        unpaidOrderMaps: unpaidMaps,
-      );
+      return await getTable(workspaceId, tableServerId) ??
+          _rowToDetailMap(existing);
     }
 
     final sessionClientId = _newId();
@@ -304,17 +305,17 @@ class TablesRepository {
     };
 
     await _db.transaction(() async {
-      await (_db.update(_db.localTables)
-            ..where((t) =>
-                t.localId.equals(localId) &
-                t.workspaceId.equals(workspaceId)))
+      await (_db.update(_db.localTables)..where(
+            (t) =>
+                t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+          ))
           .write(
-        LocalTablesCompanion(
-          status: const Value('occupied'),
-          payloadJson: Value(jsonEncode(nextPayload)),
-          updatedAt: Value(now),
-        ),
-      );
+            LocalTablesCompanion(
+              status: const Value('occupied'),
+              payloadJson: Value(jsonEncode(nextPayload)),
+              updatedAt: Value(now),
+            ),
+          );
       await _queue.enqueue(
         workspaceId: workspaceId,
         deviceId: deviceId.trim(),
@@ -404,26 +405,25 @@ class TablesRepository {
                     t.workspaceId.equals(workspaceId),
               ))
               .write(
-            LocalOrdersCompanion(
-              posStatus: const Value('cancelled'),
+                LocalOrdersCompanion(
+                  posStatus: const Value('cancelled'),
+                  updatedAt: Value(now),
+                ),
+              );
+        }
+      }
+      await (_db.update(_db.localTables)..where(
+            (t) =>
+                t.localId.equals(existing.localId) &
+                t.workspaceId.equals(workspaceId),
+          ))
+          .write(
+            LocalTablesCompanion(
+              status: const Value('occupied'),
+              payloadJson: Value(jsonEncode(nextPayload)),
               updatedAt: Value(now),
             ),
           );
-        }
-      }
-      await (_db.update(_db.localTables)
-            ..where(
-              (t) =>
-                  t.localId.equals(existing.localId) &
-                  t.workspaceId.equals(workspaceId),
-            ))
-          .write(
-        LocalTablesCompanion(
-          status: const Value('occupied'),
-          payloadJson: Value(jsonEncode(nextPayload)),
-          updatedAt: Value(now),
-        ),
-      );
       if (!alreadyOpen) {
         await _queue.enqueue(
           workspaceId: workspaceId,
@@ -524,11 +524,13 @@ class TablesRepository {
       taxCents += order.taxAmount;
       discountCents += order.discountAmount;
       totalCents += order.totalAmount;
-      final items = await (_db.select(_db.localOrderItems)
-            ..where((t) =>
-                t.orderLocalId.equals(order.localId) &
-                t.isRemoved.equals(false)))
-          .get();
+      final items =
+          await (_db.select(_db.localOrderItems)..where(
+                (t) =>
+                    t.orderLocalId.equals(order.localId) &
+                    t.isRemoved.equals(false),
+              ))
+              .get();
       for (final item in items) {
         invoiceItems.add({
           'item_name': item.name,
@@ -562,7 +564,9 @@ class TablesRepository {
     };
 
     await _db.transaction(() async {
-      await _db.into(_db.localInvoices).insert(
+      await _db
+          .into(_db.localInvoices)
+          .insert(
             LocalInvoicesCompanion.insert(
               localId: invoiceLocalId,
               workspaceId: workspaceId,
@@ -579,7 +583,9 @@ class TablesRepository {
               createdAt: now,
             ),
           );
-      await _db.into(_db.localPayments).insert(
+      await _db
+          .into(_db.localPayments)
+          .insert(
             LocalPaymentsCompanion.insert(
               localId: paymentLocalId,
               workspaceId: workspaceId,
@@ -593,17 +599,18 @@ class TablesRepository {
             ),
           );
       for (final order in activeOrders) {
-        await (_db.update(_db.localOrders)
-              ..where((t) =>
+        await (_db.update(_db.localOrders)..where(
+              (t) =>
                   t.localId.equals(order.localId) &
-                  t.workspaceId.equals(workspaceId)))
+                  t.workspaceId.equals(workspaceId),
+            ))
             .write(
-          LocalOrdersCompanion(
-            paymentStatus: const Value('paid'),
-            posStatus: const Value('completed'),
-            updatedAt: Value(now),
-          ),
-        );
+              LocalOrdersCompanion(
+                paymentStatus: const Value('paid'),
+                posStatus: const Value('completed'),
+                updatedAt: Value(now),
+              ),
+            );
       }
       await _freeTableRow(
         workspaceId: workspaceId,
@@ -666,34 +673,30 @@ class TablesRepository {
       'total': 0,
       if (lastInvoice != null) 'last_local_invoice': lastInvoice,
     };
-    return (_db.update(_db.localTables)
-          ..where(
-            (t) =>
-                t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
-          ))
+    return (_db.update(_db.localTables)..where(
+          (t) => t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+        ))
         .write(
-      LocalTablesCompanion(
-        status: const Value('available'),
-        sessionServerId: const Value(null),
-        payloadJson: Value(jsonEncode(nextTablePayload)),
-        updatedAt: Value(now),
-      ),
-    );
+          LocalTablesCompanion(
+            status: const Value('available'),
+            sessionServerId: const Value(null),
+            payloadJson: Value(jsonEncode(nextTablePayload)),
+            updatedAt: Value(now),
+          ),
+        );
   }
 
   Future<void> _closeOpenLocalSessions(String tableLocalId, DateTime now) {
-    return (_db.update(_db.localSessions)
-          ..where(
-            (t) =>
-                t.tableLocalId.equals(tableLocalId) & t.status.equals('open'),
-          ))
+    return (_db.update(_db.localSessions)..where(
+          (t) => t.tableLocalId.equals(tableLocalId) & t.status.equals('open'),
+        ))
         .write(
-      LocalSessionsCompanion(
-        status: const Value('closed'),
-        closedAt: Value(now),
-        updatedAt: Value(now),
-      ),
-    );
+          LocalSessionsCompanion(
+            status: const Value('closed'),
+            closedAt: Value(now),
+            updatedAt: Value(now),
+          ),
+        );
   }
 
   /// Cancel session + unpaid orders locally (no network required).
@@ -733,27 +736,27 @@ class TablesRepository {
 
     await _db.transaction(() async {
       for (final order in activeOrders) {
-        await (_db.update(_db.localOrders)
-              ..where((t) => t.localId.equals(order.localId)))
-            .write(
+        await (_db.update(
+          _db.localOrders,
+        )..where((t) => t.localId.equals(order.localId))).write(
           LocalOrdersCompanion(
             posStatus: const Value('cancelled'),
             updatedAt: Value(now),
           ),
         );
       }
-      await (_db.update(_db.localTables)
-            ..where((t) =>
-                t.localId.equals(localId) &
-                t.workspaceId.equals(workspaceId)))
+      await (_db.update(_db.localTables)..where(
+            (t) =>
+                t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+          ))
           .write(
-        LocalTablesCompanion(
-          status: const Value('available'),
-          sessionServerId: const Value(null),
-          payloadJson: Value(jsonEncode(nextPayload)),
-          updatedAt: Value(now),
-        ),
-      );
+            LocalTablesCompanion(
+              status: const Value('available'),
+              sessionServerId: const Value(null),
+              payloadJson: Value(jsonEncode(nextPayload)),
+              updatedAt: Value(now),
+            ),
+          );
       await _closeOpenLocalSessions(localId, now);
       await _queue.enqueue(
         workspaceId: workspaceId,
@@ -786,9 +789,9 @@ class TablesRepository {
     final next = {...payload, 'notes': trimmed};
     final clientRef = _newId();
     await _db.transaction(() async {
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(localId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(localId))).write(
         LocalTablesCompanion(
           payloadJson: Value(jsonEncode(next)),
           updatedAt: Value(DateTime.now()),
@@ -833,9 +836,9 @@ class TablesRepository {
     };
     final clientRef = _newId();
     await _db.transaction(() async {
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(localId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(localId))).write(
         LocalTablesCompanion(
           payloadJson: Value(jsonEncode(next)),
           updatedAt: Value(DateTime.now()),
@@ -879,12 +882,14 @@ class TablesRepository {
     final clientRef = _newId();
     final now = DateTime.now();
 
-    final orders = await (_db.select(_db.localOrders)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) &
-              t.tableServerId.equals(fromTableServerId) &
-              t.posStatus.isNotValue('cancelled')))
-        .get();
+    final orders =
+        await (_db.select(_db.localOrders)..where(
+              (t) =>
+                  t.workspaceId.equals(workspaceId) &
+                  t.tableServerId.equals(fromTableServerId) &
+                  t.posStatus.isNotValue('cancelled'),
+            ))
+            .get();
 
     final movedPayload = {
       ...toPayload,
@@ -913,9 +918,9 @@ class TablesRepository {
 
     await _db.transaction(() async {
       for (final order in orders) {
-        await (_db.update(_db.localOrders)
-              ..where((t) => t.localId.equals(order.localId)))
-            .write(
+        await (_db.update(
+          _db.localOrders,
+        )..where((t) => t.localId.equals(order.localId))).write(
           LocalOrdersCompanion(
             tableServerId: Value(toTableServerId),
             tableLocalId: Value(toLocalId),
@@ -923,9 +928,9 @@ class TablesRepository {
           ),
         );
       }
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(toLocalId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(toLocalId))).write(
         LocalTablesCompanion(
           status: const Value('occupied'),
           sessionServerId: Value(from.sessionServerId),
@@ -933,9 +938,9 @@ class TablesRepository {
           updatedAt: Value(now),
         ),
       );
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(fromLocalId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(fromLocalId))).write(
         LocalTablesCompanion(
           status: const Value('available'),
           sessionServerId: const Value(null),
@@ -979,27 +984,31 @@ class TablesRepository {
     final clientRef = _newId();
     final now = DateTime.now();
 
-    final orders = await (_db.select(_db.localOrders)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) &
-              t.tableServerId.equals(fromTableServerId) &
-              t.posStatus.isNotValue('cancelled')))
-        .get();
+    final orders =
+        await (_db.select(_db.localOrders)..where(
+              (t) =>
+                  t.workspaceId.equals(workspaceId) &
+                  t.tableServerId.equals(fromTableServerId) &
+                  t.posStatus.isNotValue('cancelled'),
+            ))
+            .get();
 
     final mergedPayload = {
       ...toPayload,
       'id': toTableServerId,
       'status': 'occupied',
       'session_open': true,
-      'subtotal': asDoubleOr(toPayload['subtotal']) +
+      'subtotal':
+          asDoubleOr(toPayload['subtotal']) +
           asDoubleOr(fromPayload['subtotal']),
-      'tax_amount': asDoubleOr(toPayload['tax_amount']) +
+      'tax_amount':
+          asDoubleOr(toPayload['tax_amount']) +
           asDoubleOr(fromPayload['tax_amount']),
       'discount_amount':
           asDoubleOr(toPayload['discount_amount']) +
-              asDoubleOr(fromPayload['discount_amount']),
-      'total': asDoubleOr(toPayload['total']) +
-          asDoubleOr(fromPayload['total']),
+          asDoubleOr(fromPayload['discount_amount']),
+      'total':
+          asDoubleOr(toPayload['total']) + asDoubleOr(fromPayload['total']),
     };
     final clearedFrom = {
       ...fromPayload,
@@ -1018,9 +1027,9 @@ class TablesRepository {
 
     await _db.transaction(() async {
       for (final order in orders) {
-        await (_db.update(_db.localOrders)
-              ..where((t) => t.localId.equals(order.localId)))
-            .write(
+        await (_db.update(
+          _db.localOrders,
+        )..where((t) => t.localId.equals(order.localId))).write(
           LocalOrdersCompanion(
             tableServerId: Value(toTableServerId),
             tableLocalId: Value(toLocalId),
@@ -1028,18 +1037,18 @@ class TablesRepository {
           ),
         );
       }
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(toLocalId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(toLocalId))).write(
         LocalTablesCompanion(
           status: const Value('occupied'),
           payloadJson: Value(jsonEncode(mergedPayload)),
           updatedAt: Value(now),
         ),
       );
-      await (_db.update(_db.localTables)
-            ..where((t) => t.localId.equals(fromLocalId)))
-          .write(
+      await (_db.update(
+        _db.localTables,
+      )..where((t) => t.localId.equals(fromLocalId))).write(
         LocalTablesCompanion(
           status: const Value('available'),
           sessionServerId: const Value(null),
@@ -1085,19 +1094,21 @@ class TablesRepository {
         final itemLocalId = '${move['item_local_id'] ?? ''}';
         final qty = asIntOr(move['quantity']);
         if (itemLocalId.isEmpty || qty <= 0) continue;
-        final item = await (_db.select(_db.localOrderItems)
-              ..where((t) =>
-                  t.localId.equals(itemLocalId) &
-                  t.workspaceId.equals(workspaceId)))
-            .getSingleOrNull();
+        final item =
+            await (_db.select(_db.localOrderItems)..where(
+                  (t) =>
+                      t.localId.equals(itemLocalId) &
+                      t.workspaceId.equals(workspaceId),
+                ))
+                .getSingleOrNull();
         if (item == null || item.isRemoved) continue;
         final leave = item.quantity - qty;
         if (leave < 0) continue;
         final unit = item.unitPrice;
         if (leave == 0) {
-          await (_db.update(_db.localOrderItems)
-                ..where((t) => t.localId.equals(itemLocalId)))
-              .write(
+          await (_db.update(
+            _db.localOrderItems,
+          )..where((t) => t.localId.equals(itemLocalId))).write(
             LocalOrderItemsCompanion(
               isRemoved: const Value(true),
               quantity: const Value(0),
@@ -1106,9 +1117,9 @@ class TablesRepository {
             ),
           );
         } else {
-          await (_db.update(_db.localOrderItems)
-                ..where((t) => t.localId.equals(itemLocalId)))
-              .write(
+          await (_db.update(
+            _db.localOrderItems,
+          )..where((t) => t.localId.equals(itemLocalId))).write(
             LocalOrderItemsCompanion(
               quantity: Value(leave),
               totalAmount: Value(leave * unit),
@@ -1119,7 +1130,9 @@ class TablesRepository {
         final movedLocalId = _newId();
         final lineTotal = qty * unit;
         newSubtotal += lineTotal;
-        await _db.into(_db.localOrderItems).insert(
+        await _db
+            .into(_db.localOrderItems)
+            .insert(
               LocalOrderItemsCompanion.insert(
                 localId: movedLocalId,
                 workspaceId: workspaceId,
@@ -1135,7 +1148,9 @@ class TablesRepository {
             );
       }
 
-      await _db.into(_db.localOrders).insert(
+      await _db
+          .into(_db.localOrders)
+          .insert(
             LocalOrdersCompanion.insert(
               localId: newOrderId,
               workspaceId: workspaceId,
@@ -1198,10 +1213,12 @@ class TablesRepository {
   }
 
   Future<LocalTable> _requireTable(int workspaceId, String localId) async {
-    final table = await (_db.select(_db.localTables)
-          ..where((t) =>
-              t.localId.equals(localId) & t.workspaceId.equals(workspaceId)))
-        .getSingleOrNull();
+    final table =
+        await (_db.select(_db.localTables)..where(
+              (t) =>
+                  t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+            ))
+            .getSingleOrNull();
     if (table == null) {
       throw StateError('الطاولة غير متاحة محليًا.');
     }
@@ -1271,16 +1288,31 @@ class TablesRepository {
 
   Map<String, dynamic> _rowToBoardMap(
     LocalTable row, {
-    List<LocalOrder> unpaidOrders = const [],
+    List<LocalOrder> sessionOrders = const [],
   }) {
     final payload = _safeMap(row.payloadJson);
-    final totalCents =
-        unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
-    final occupied = unpaidOrders.isNotEmpty ||
+    final occupied =
+        sessionOrders.isNotEmpty ||
         row.status == 'occupied' ||
         _payloadSessionOpen(payload);
+    final activeOrders = !occupied
+        ? const <Map<String, dynamic>>[]
+        : mergeTableSessionOrders(
+            sessionOrders: _normalizeActiveOrders(payload['orders']),
+            liveOrders: [
+              for (final order in sessionOrders) _orderIdentityMap(order),
+            ],
+          );
+    final totalCents = sessionOrders.fold<int>(
+      0,
+      (sum, order) => sum + order.totalAmount,
+    );
     final sessionClientId = '${payload['session_client_id'] ?? ''}'.trim();
     final lastSale = asDouble(payload['last_sale_total'] ?? payload['total']);
+    final mergedTotal = activeOrders.fold<double>(
+      0,
+      (sum, order) => sum + asDoubleOr(order['total_amount']),
+    );
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
@@ -1288,18 +1320,24 @@ class TablesRepository {
       'name': row.name,
       'status': occupied ? 'occupied' : 'available',
       'capacity': row.capacity,
-      'session_id': row.sessionServerId ??
+      'session_id':
+          row.sessionServerId ??
           payload['session_id'] ??
           (sessionClientId.isEmpty ? null : sessionClientId),
-      'session_client_id':
-          sessionClientId.isEmpty ? payload['session_client_id'] : sessionClientId,
+      'session_client_id': sessionClientId.isEmpty
+          ? payload['session_client_id']
+          : sessionClientId,
       'session_open': occupied,
       'opened_at': payload['opened_at'],
       'workspace_id': row.workspaceId,
-      if (unpaidOrders.isNotEmpty) ...{
-        'orders_count': unpaidOrders.length,
-        'open_orders_count': unpaidOrders.length,
-        'total': Money.fromCents(totalCents),
+      if (activeOrders.isNotEmpty) ...{
+        'orders_count': activeOrders.length,
+        'open_orders_count': activeOrders.length,
+        'total': mergedTotal > 0
+            ? mergedTotal
+            : (totalCents > 0
+                  ? Money.fromCents(totalCents)
+                  : (lastSale ?? payload['total'])),
       } else if (occupied && lastSale != null && lastSale > 0)
         'total': lastSale,
     };
@@ -1307,22 +1345,30 @@ class TablesRepository {
 
   Map<String, dynamic> _rowToDetailMap(
     LocalTable row, {
-    List<LocalOrder> unpaidOrders = const [],
-    List<Map<String, dynamic>> unpaidOrderMaps = const [],
+    List<LocalOrder> liveOrders = const [],
+    List<Map<String, dynamic>> liveOrderMaps = const [],
   }) {
     final payload = _safeMap(row.payloadJson);
-    final totalCents =
-        unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
-    final occupied = unpaidOrders.isNotEmpty ||
+    final occupied =
+        liveOrders.isNotEmpty ||
         row.status == 'occupied' ||
         _payloadSessionOpen(payload);
     final sessionClientId = '${payload['session_client_id'] ?? ''}'.trim();
     final lastSale = asDouble(payload['last_sale_total'] ?? payload['total']);
     final activeOrders = !occupied
         ? const <Map<String, dynamic>>[]
-        : unpaidOrderMaps.isNotEmpty
-            ? unpaidOrderMaps
-            : _normalizeActiveOrders(payload['orders']);
+        : mergeTableSessionOrders(
+            sessionOrders: _normalizeActiveOrders(payload['orders']),
+            liveOrders: liveOrderMaps,
+          );
+    final totalCents = liveOrders.fold<int>(
+      0,
+      (sum, order) => sum + order.totalAmount,
+    );
+    final mergedTotal = activeOrders.fold<double>(
+      0,
+      (sum, order) => sum + asDoubleOr(order['total_amount']),
+    );
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
@@ -1330,18 +1376,23 @@ class TablesRepository {
       'name': row.name.isNotEmpty ? row.name : '${payload['name'] ?? ''}',
       'status': occupied ? 'occupied' : 'available',
       'capacity': row.capacity ?? payload['capacity'],
-      'session_id': row.sessionServerId ??
+      'session_id':
+          row.sessionServerId ??
           payload['session_id'] ??
           (sessionClientId.isEmpty ? null : sessionClientId),
-      'session_client_id':
-          sessionClientId.isEmpty ? payload['session_client_id'] : sessionClientId,
+      'session_client_id': sessionClientId.isEmpty
+          ? payload['session_client_id']
+          : sessionClientId,
       'session_open': occupied,
       'opened_at': payload['opened_at'],
       'workspace_id': row.workspaceId,
-      if (unpaidOrders.isNotEmpty) ...{
-        'orders_count': unpaidOrders.length,
-        'open_orders_count': unpaidOrders.length,
-        'total': payload['total'] ?? Money.fromCents(totalCents),
+      if (activeOrders.isNotEmpty) ...{
+        'orders_count': activeOrders.length,
+        'open_orders_count': activeOrders.length,
+        'total': mergedTotal > 0
+            ? mergedTotal
+            : (payload['total'] ??
+                  (totalCents > 0 ? Money.fromCents(totalCents) : lastSale)),
       } else if (occupied && lastSale != null && lastSale > 0)
         'total': lastSale,
       'orders': activeOrders,
@@ -1353,13 +1404,13 @@ class TablesRepository {
   ) async {
     final out = <Map<String, dynamic>>[];
     for (final order in orders) {
-      final items = await (_db.select(_db.localOrderItems)
-            ..where(
-              (t) =>
-                  t.orderLocalId.equals(order.localId) &
-                  t.isRemoved.equals(false),
-            ))
-          .get();
+      final items =
+          await (_db.select(_db.localOrderItems)..where(
+                (t) =>
+                    t.orderLocalId.equals(order.localId) &
+                    t.isRemoved.equals(false),
+              ))
+              .get();
       out.add({
         'id': order.serverId ?? order.localId,
         'local_id': order.localId,
@@ -1370,13 +1421,14 @@ class TablesRepository {
         'tax_amount': Money.fromCents(order.taxAmount),
         'total_amount': Money.fromCents(order.totalAmount),
         'items': [
-          for (final item in items) _lineSnapshot({
-            'product_local_id': item.productLocalId,
-            'item_name': item.name,
-            'quantity': item.quantity,
-            'unit_price': Money.fromCents(item.unitPrice),
-            'total_amount': Money.fromCents(item.totalAmount),
-          }),
+          for (final item in items)
+            _lineSnapshot({
+              'product_local_id': item.productLocalId,
+              'item_name': item.name,
+              'quantity': item.quantity,
+              'unit_price': Money.fromCents(item.unitPrice),
+              'total_amount': Money.fromCents(item.totalAmount),
+            }),
         ],
       });
     }
@@ -1410,14 +1462,7 @@ class TablesRepository {
   List<Map<String, dynamic>> _normalizeActiveOrders(dynamic raw) {
     final rows = asMapList(raw);
     if (rows.isEmpty) return const [];
-    final looksLikeLines = rows.every((row) {
-      if (row['items'] is List) return false;
-      return row.containsKey('item_name') ||
-          row.containsKey('quantity') ||
-          row.containsKey('unit_price') ||
-          row.containsKey('product_name');
-    });
-    if (looksLikeLines) {
+    if (looksLikeFlatOrderLines(rows)) {
       final lines = [for (final row in rows) _lineSnapshot(row)];
       final total = lines.fold<double>(
         0,
@@ -1448,7 +1493,8 @@ class TablesRepository {
     final name = catalogItemName(item);
     final qty = asIntOr(item['quantity'], 1);
     final unit = asDoubleOr(item['unit_price']);
-    final total = asDouble(item['total_amount'] ?? item['total']) ?? (unit * qty);
+    final total =
+        asDouble(item['total_amount'] ?? item['total']) ?? (unit * qty);
     final productLocalId =
         '${item['product_local_id'] ?? item['productLocalId'] ?? ''}'.trim();
     return {
@@ -1462,15 +1508,23 @@ class TablesRepository {
     };
   }
 
+  Future<List<LocalOrder>> _nonCancelledOrdersInWorkspace(int workspaceId) {
+    return (_db.select(_db.localOrders)..where(
+          (t) =>
+              t.workspaceId.equals(workspaceId) &
+              t.posStatus.isNotValue('cancelled'),
+        ))
+        .get();
+  }
+
   Future<List<LocalOrder>> _unpaidOrdersInWorkspace(int workspaceId) {
-    return (_db.select(_db.localOrders)
-          ..where(
-            (t) =>
-                t.workspaceId.equals(workspaceId) &
-                t.posStatus.isNotValue('cancelled') &
-                t.paymentStatus.isNotValue('paid') &
-                t.posStatus.isNotValue('completed'),
-          ))
+    return (_db.select(_db.localOrders)..where(
+          (t) =>
+              t.workspaceId.equals(workspaceId) &
+              t.posStatus.isNotValue('cancelled') &
+              t.paymentStatus.isNotValue('paid') &
+              t.posStatus.isNotValue('completed'),
+        ))
         .get();
   }
 
@@ -1478,6 +1532,38 @@ class TablesRepository {
     final all = await _unpaidOrdersInWorkspace(table.workspaceId);
     return _ordersMatchingTable(table, all);
   }
+
+  Future<List<LocalOrder>> _liveSessionOrdersForTable(LocalTable table) async {
+    final all = await _nonCancelledOrdersInWorkspace(table.workspaceId);
+    return _sessionOrdersMatchingTable(table, all);
+  }
+
+  List<LocalOrder> _sessionOrdersMatchingTable(
+    LocalTable table,
+    List<LocalOrder> orders,
+  ) {
+    final payload = _safeMap(table.payloadJson);
+    final openedAt = parseOpenedAt(payload['opened_at']);
+    return [
+      for (final order in _ordersMatchingTable(table, orders))
+        if (isOrderInOpenTableSession(
+          posStatus: order.posStatus,
+          paymentStatus: order.paymentStatus,
+          createdAt: order.createdAt,
+          openedAt: openedAt,
+        ))
+          order,
+    ];
+  }
+
+  Map<String, dynamic> _orderIdentityMap(LocalOrder order) => {
+    'local_id': order.localId,
+    'id': order.serverId ?? order.localId,
+    'order_number': order.orderNumber ?? order.localId,
+    'pos_status': order.posStatus,
+    'payment_status': order.paymentStatus,
+    'total_amount': Money.fromCents(order.totalAmount),
+  };
 
   List<LocalOrder> _ordersMatchingTable(
     LocalTable table,
@@ -1496,15 +1582,18 @@ class TablesRepository {
     String? previousJson,
     Map<String, dynamic> boardRow,
   ) {
-    final previous =
-        previousJson == null ? const <String, dynamic>{} : _safeMap(previousJson);
+    final previous = previousJson == null
+        ? const <String, dynamic>{}
+        : _safeMap(previousJson);
     final merged = <String, dynamic>{...previous, ...boardRow};
     // Keep detailed orders/totals if an occupied board snapshot omits them.
     // Never restore historical lines onto an available table.
     if (boardRow['orders'] == null && previous['orders'] != null) {
-      final incomingStatus = '${boardRow['status'] ?? previous['status'] ?? ''}';
-      merged['orders'] =
-          incomingStatus == 'available' ? const [] : previous['orders'];
+      final incomingStatus =
+          '${boardRow['status'] ?? previous['status'] ?? ''}';
+      merged['orders'] = incomingStatus == 'available'
+          ? const []
+          : previous['orders'];
     }
     if (boardRow['subtotal'] == null && previous['subtotal'] != null) {
       merged['subtotal'] = previous['subtotal'];

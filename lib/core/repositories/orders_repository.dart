@@ -6,10 +6,12 @@ import 'package:uuid/uuid.dart';
 import '../config/app_config.dart';
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
+import '../pos/table_session_orders.dart';
 import '../local_db/local_ids.dart';
 import '../offline/offline_store.dart';
 import '../offline/pending_order.dart';
 import '../util/json_numbers.dart';
+import '../util/occupied_duration.dart';
 import 'sync_queue_repository.dart';
 
 /// Local-first orders: UI → repository → SQLite transaction → sync_queue.
@@ -92,7 +94,11 @@ class OrdersRepository {
               orderType: 'table',
               tableServerId: Value(resolvedServerId),
               tableLocalId: Value(
-                await _db.existingFk('local_tables', 'local_id', resolvedLocalId),
+                await _db.existingFk(
+                  'local_tables',
+                  'local_id',
+                  resolvedLocalId,
+                ),
               ),
               notes: Value(notes),
               subtotal: Value(Money.toCents(totals.subtotal)),
@@ -125,9 +131,7 @@ class OrdersRepository {
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
                 quantity: asIntOr(item['quantity']),
                 unitPrice: Money.toCents(item['unit_price']),
-                discountAmount: Value(
-                  Money.toCents(item['discount_amount']),
-                ),
+                discountAmount: Value(Money.toCents(item['discount_amount'])),
                 totalAmount: Money.toCents(
                   item['total_amount'] ??
                       (asIntOr(item['quantity']) *
@@ -244,9 +248,7 @@ class OrdersRepository {
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
                 quantity: asIntOr(item['quantity']),
                 unitPrice: Money.toCents(item['unit_price']),
-                discountAmount: Value(
-                  Money.toCents(item['discount_amount']),
-                ),
+                discountAmount: Value(Money.toCents(item['discount_amount'])),
                 totalAmount: Money.toCents(
                   item['total_amount'] ??
                       (asIntOr(item['quantity']) *
@@ -343,9 +345,7 @@ class OrdersRepository {
                 name: '${item['name'] ?? item['product_name'] ?? 'صنف'}',
                 quantity: asIntOr(item['quantity']),
                 unitPrice: Money.toCents(item['unit_price']),
-                discountAmount: Value(
-                  Money.toCents(item['discount_amount']),
-                ),
+                discountAmount: Value(Money.toCents(item['discount_amount'])),
                 totalAmount: Money.toCents(
                   item['total_amount'] ??
                       (asIntOr(item['quantity']) *
@@ -436,24 +436,25 @@ class OrdersRepository {
   }) async {
     if (workspaceId <= 0 || tableId <= 0) return const [];
     final table = await _lookupTable(workspaceId, tableId);
-    final rows = await (_db.select(_db.localOrders)
-          ..where((t) {
-            Expression<bool> match = t.tableServerId.equals(tableId);
-            if (table != null) {
-              match = match | t.tableLocalId.equals(table.localId);
-              final sid = table.serverId;
-              if (sid != null && sid != tableId) {
-                match = match | t.tableServerId.equals(sid);
-              }
-            }
-            return t.workspaceId.equals(workspaceId) &
-                t.posStatus.isNotValue('cancelled') &
-                t.posStatus.isNotValue('completed') &
-                t.paymentStatus.isNotValue('paid') &
-                match;
-          })
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-        .get();
+    final rows =
+        await (_db.select(_db.localOrders)
+              ..where((t) {
+                Expression<bool> match = t.tableServerId.equals(tableId);
+                if (table != null) {
+                  match = match | t.tableLocalId.equals(table.localId);
+                  final sid = table.serverId;
+                  if (sid != null && sid != tableId) {
+                    match = match | t.tableServerId.equals(sid);
+                  }
+                }
+                return t.workspaceId.equals(workspaceId) &
+                    t.posStatus.isNotValue('cancelled') &
+                    t.posStatus.isNotValue('completed') &
+                    t.paymentStatus.isNotValue('paid') &
+                    match;
+              })
+              ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+            .get();
     final out = <Map<String, dynamic>>[];
     for (final row in rows) {
       out.add(_orderToDisplay(row, await _itemsFor(row.localId)));
@@ -851,9 +852,9 @@ class OrdersRepository {
       final productLocalId = hintedLocal.isNotEmpty
           ? hintedLocal
           : (serverId == null &&
-                  '${raw['pos_menu_item_id'] ?? ''}'.trim().isNotEmpty
-              ? '${raw['pos_menu_item_id']}'.trim()
-              : null);
+                    '${raw['pos_menu_item_id'] ?? ''}'.trim().isNotEmpty
+                ? '${raw['pos_menu_item_id']}'.trim()
+                : null);
       out.add({
         'local_id': raw['local_id'] ?? _newItemId(),
         'pos_menu_item_id': serverId,
@@ -979,19 +980,19 @@ class OrdersRepository {
 
   Future<LocalTable?> _lookupTable(int workspaceId, int tableId) async {
     if (workspaceId <= 0 || tableId <= 0) return null;
-    final byServer = await (_db.select(_db.localTables)
-          ..where(
-            (t) =>
-                t.workspaceId.equals(workspaceId) & t.serverId.equals(tableId),
-          ))
-        .getSingleOrNull();
+    final byServer =
+        await (_db.select(_db.localTables)..where(
+              (t) =>
+                  t.workspaceId.equals(workspaceId) &
+                  t.serverId.equals(tableId),
+            ))
+            .getSingleOrNull();
     if (byServer != null) return byServer;
-    return (_db.select(_db.localTables)
-          ..where(
-            (t) =>
-                t.workspaceId.equals(workspaceId) &
-                t.localId.equals(LocalIds.table(workspaceId, tableId)),
-          ))
+    return (_db.select(_db.localTables)..where(
+          (t) =>
+              t.workspaceId.equals(workspaceId) &
+              t.localId.equals(LocalIds.table(workspaceId, tableId)),
+        ))
         .getSingleOrNull();
   }
 
@@ -1024,65 +1025,98 @@ class OrdersRepository {
     final table = await _lookupTable(workspaceId, tableId);
     if (table == null) return;
     final sid = table.serverId ?? tableId;
-    final open = await (_db.select(_db.localOrders)
-          ..where((t) {
-            Expression<bool> match = t.tableServerId.equals(sid) |
-                t.tableLocalId.equals(table.localId);
-            return t.workspaceId.equals(workspaceId) &
-                t.posStatus.isNotValue('cancelled') &
-                t.paymentStatus.isNotValue('paid') &
-                t.posStatus.isNotValue('completed') &
-                match;
-          }))
-        .get();
     Map<String, dynamic> payload = const {};
     try {
       final decoded = jsonDecode(table.payloadJson);
       if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
     } catch (_) {}
-    if (open.isEmpty) {
-      final occupiedCheckout = table.status == 'occupied' &&
+    final openedAt = parseOpenedAt(payload['opened_at']);
+    final sessionRows =
+        await (_db.select(_db.localOrders)..where((t) {
+              Expression<bool> match =
+                  t.tableServerId.equals(sid) |
+                  t.tableLocalId.equals(table.localId);
+              return t.workspaceId.equals(workspaceId) &
+                  t.posStatus.isNotValue('cancelled') &
+                  match;
+            }))
+            .get();
+    final liveRows = [
+      for (final order in sessionRows)
+        if (isOrderInOpenTableSession(
+          posStatus: order.posStatus,
+          paymentStatus: order.paymentStatus,
+          createdAt: order.createdAt,
+          openedAt: openedAt,
+        ))
+          order,
+    ];
+    final liveMaps = <Map<String, dynamic>>[];
+    for (final order in liveRows) {
+      liveMaps.add(_orderToDisplay(order, await _itemsFor(order.localId)));
+    }
+    var previous = asMapList(payload['orders']);
+    if (looksLikeFlatOrderLines(previous)) {
+      final total = previous.fold<double>(
+        0,
+        (sum, row) => sum + asDoubleOr(row['total_amount']),
+      );
+      previous = [
+        {
+          'order_number': '${payload['last_invoice_number'] ?? 'الطلب الحالي'}',
+          'pos_status': 'completed',
+          'payment_status': 'paid',
+          'invoice_local_id': payload['last_invoice_local_id'],
+          'total_amount': total,
+          'items': previous,
+        },
+      ];
+    }
+    final merged = mergeTableSessionOrders(
+      sessionOrders: previous,
+      liveOrders: liveMaps,
+    );
+    if (merged.isEmpty) {
+      final occupiedCheckout =
+          table.status == 'occupied' &&
           '${payload['last_invoice_local_id'] ?? ''}'.trim().isNotEmpty;
       if (occupiedCheckout) return;
     }
-    var subtotal = 0;
-    var tax = 0;
-    var discount = 0;
-    var total = 0;
-    final orderMaps = <Map<String, dynamic>>[];
-    for (final order in open) {
-      subtotal += order.subtotal;
-      tax += order.taxAmount;
-      discount += order.discountAmount;
-      total += order.totalAmount;
-      orderMaps.add(_orderToDisplay(order, await _itemsFor(order.localId)));
+    var subtotal = 0.0;
+    var tax = 0.0;
+    var discount = 0.0;
+    var total = 0.0;
+    for (final order in merged) {
+      subtotal += asDoubleOr(order['subtotal']);
+      tax += asDoubleOr(order['tax_amount']);
+      discount += asDoubleOr(order['discount_amount']);
+      total += asDoubleOr(order['total_amount']);
     }
     final next = {
       ...payload,
       'id': sid,
       'status': 'occupied',
       'session_open': true,
-      'orders': orderMaps,
-      'orders_count': orderMaps.length,
-      'open_orders_count': orderMaps.length,
-      'subtotal': Money.fromCents(subtotal),
-      'tax_amount': Money.fromCents(tax),
-      'discount_amount': Money.fromCents(discount),
-      'total': Money.fromCents(total),
+      'orders': merged,
+      'orders_count': merged.length,
+      'open_orders_count': merged.length,
+      if (total > 0) 'subtotal': subtotal > 0 ? subtotal : total,
+      if (tax > 0) 'tax_amount': tax,
+      if (discount > 0) 'discount_amount': discount,
+      if (total > 0) 'total': total,
     };
-    await (_db.update(_db.localTables)
-          ..where(
-            (t) =>
-                t.localId.equals(table.localId) &
-                t.workspaceId.equals(workspaceId),
-          ))
+    await (_db.update(_db.localTables)..where(
+          (t) =>
+              t.localId.equals(table.localId) &
+              t.workspaceId.equals(workspaceId),
+        ))
         .write(
-      LocalTablesCompanion(
-        status: const Value('occupied'),
-        payloadJson: Value(jsonEncode(next)),
-        updatedAt: Value(now),
-      ),
-    );
+          LocalTablesCompanion(
+            status: const Value('occupied'),
+            payloadJson: Value(jsonEncode(next)),
+            updatedAt: Value(now),
+          ),
+        );
   }
 
   Future<void> _recordSaleMovements({
@@ -1100,8 +1134,8 @@ class OrdersRepository {
       final productLocalId = hintedLocal.isNotEmpty
           ? hintedLocal
           : (productServerId == null
-              ? null
-              : LocalIds.product(workspaceId, productServerId));
+                ? null
+                : LocalIds.product(workspaceId, productServerId));
       int? catalogProductId;
       if (productLocalId != null) {
         final product = await (_db.select(

@@ -52,6 +52,7 @@ class HsSoftGrid extends StatelessWidget {
     this.spacing = 8,
     this.minTileWidth = 280,
     this.maxColumns = 3,
+    this.tileHeight,
   });
 
   final List<Widget> children;
@@ -59,6 +60,7 @@ class HsSoftGrid extends StatelessWidget {
   final double spacing;
   final double minTileWidth;
   final int maxColumns;
+  final double? tileHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -79,7 +81,8 @@ class HsSoftGrid extends StatelessWidget {
           spacing: spacing,
           runSpacing: spacing,
           children: [
-            for (final child in children) SizedBox(width: width, child: child),
+            for (final child in children)
+              SizedBox(width: width, height: tileHeight, child: child),
           ],
         );
       },
