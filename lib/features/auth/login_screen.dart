@@ -9,8 +9,7 @@ import '../../core/theme/hasim_radius.dart';
 import '../../core/theme/hasim_spacing.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
-/// Offline-only entry: local PIN or first-time standalone store setup.
-/// No email / Google / Laravel login.
+/// Offline-only entry: cashier PIN, kitchen station, or first-time setup.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -19,17 +18,16 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  var _loading = false;
+  var _loading = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _enterLocal());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
-  Future<void> _enterLocal() async {
-    if (_loading) return;
+  Future<void> _boot() async {
     setState(() {
       _loading = true;
       _error = null;
@@ -39,14 +37,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (!mounted) return;
       if (store == null) {
         context.go('/standalone-setup');
-      } else {
-        context.go('/pin');
+        return;
       }
+      setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'تعذر فتح الوضع المحلي: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      setState(() {
+        _error = 'تعذر فتح الوضع المحلي: $e';
+        _loading = false;
+      });
     }
   }
 
@@ -64,7 +63,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         child: SafeArea(
           child: Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
+              constraints: const BoxConstraints(maxWidth: 480),
               child: ListView(
                 padding: const EdgeInsets.all(HasimSpacing.xl),
                 children: [
@@ -123,7 +122,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'لا يوجد اتصال بالخادم أو مزامنة. البيانات تُحفظ على هذا الجهاز فقط.',
+                          'الكاشير للمبيعات. المطبخ محطة منفصلة للشيف قبل تسجيل الدخول.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                         const SizedBox(height: 16),
@@ -150,33 +149,53 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           const SizedBox(height: 12),
                         ],
-                        SizedBox(
-                          height: 48,
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: HasimColors.brand,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(
-                                  HasimRadius.md,
+                        if (_loading)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
                                 ),
                               ),
                             ),
-                            onPressed: _loading ? null : _enterLocal,
-                            icon: _loading
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.storefront_outlined),
-                            label: Text(
-                              _loading ? 'جاري الفتح…' : 'الدخول للكاشير المحلي',
+                          )
+                        else ...[
+                          SizedBox(
+                            height: 48,
+                            child: FilledButton.icon(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: HasimColors.brand,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    HasimRadius.md,
+                                  ),
+                                ),
+                              ),
+                              onPressed: () => context.go('/pin'),
+                              icon: const Icon(Icons.storefront_outlined),
+                              label: const Text('دخول الكاشير'),
                             ),
                           ),
-                        ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    HasimRadius.md,
+                                  ),
+                                ),
+                              ),
+                              onPressed: () => context.go('/kitchen'),
+                              icon: const Icon(Icons.soup_kitchen_outlined),
+                              label: const Text('دخول المطبخ'),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

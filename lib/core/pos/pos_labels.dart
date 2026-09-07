@@ -18,9 +18,25 @@ abstract final class PosLabels {
   static String orderType(String? type) => switch (type) {
         'table' => 'طاولة',
         'delivery' => 'توصيل',
-        'takeaway' => 'خارجي',
-        _ => 'خارجي',
+        'takeaway' => 'طلب خارجي',
+        _ => 'طلب خارجي',
       };
+
+  /// Kitchen ticket title: table name, or the takeaway/delivery channel.
+  static String kitchenHeading({
+    String? orderType,
+    String? tableName,
+  }) {
+    switch (orderType) {
+      case 'delivery':
+        return 'توصيل';
+      case 'takeaway':
+        return 'طلب خارجي';
+      default:
+        final table = tableName?.trim() ?? '';
+        return table.isEmpty ? 'طاولة' : table;
+    }
+  }
 
   static String tableStatus(String? status) => switch (status) {
         'occupied' => 'مشغولة',

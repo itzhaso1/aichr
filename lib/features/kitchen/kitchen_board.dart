@@ -1,21 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/cashier_api.dart';
-import '../../core/auth/auth_controller.dart';
-import '../../core/config/app_config.dart';
-import '../../core/network/cashier_link.dart';
-import '../../core/offline/offline_store.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_labels.dart';
-import '../../core/pos/pos_mode.dart';
-import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
-/// Kitchen prep board — mirrors `workspace/pos/kitchen/index`.
+/// Kitchen prep board — SQLite `watch()` only (no API polling).
 class KitchenBoard extends ConsumerStatefulWidget {
   const KitchenBoard({super.key});
 
@@ -24,10 +20,11 @@ class KitchenBoard extends ConsumerStatefulWidget {
 }
 
 class _KitchenBoardState extends ConsumerState<KitchenBoard> {
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
   List<Map<String, dynamic>> _orders = const [];
   var _loading = true;
   String? _error;
-  PollingPosEventSource? _source;
+  int? _workspaceId;
 
   static const _statusOptions = [
     'new',
@@ -42,93 +39,61 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
   @override
   void initState() {
     super.initState();
-    _load();
-    _startPolling();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_bind());
+    });
   }
 
   @override
   void dispose() {
-    _source?.dispose();
+    _sub?.cancel();
     super.dispose();
   }
 
-  Future<void> _startPolling() async {
-    _source = PollingPosEventSource(
-      interval: Duration(seconds: AppConfig.kitchenPollSeconds),
-      enabled: () => ref.read(cashierLinkProvider).isOnline,
-      poll: () async {
-        await _load(silent: true);
-        return const <PosEvent>[];
-      },
-    );
-    await _source!.start();
-  }
-
-  Future<void> _load({bool silent = false}) async {
-    if (!silent && mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
-    final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId != null && workspaceId > 0) {
-      await for (final local
-          in ref
-              .read(kitchenLocalServiceProvider)
-              .watchActive(workspaceId)
-              .take(1)) {
-        if (!mounted) return;
-        setState(() {
-          _orders = local;
-          _loading = false;
-          _error = null;
-        });
+  Future<void> _bind() async {
+    await _sub?.cancel();
+    var workspaceId = ref.read(workspaceIdProvider);
+    if (workspaceId == null || workspaceId <= 0) {
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      workspaceId = store?.workspaceId;
+      if (workspaceId != null && mounted) {
+        ref.read(workspaceIdProvider.notifier).state = workspaceId;
       }
     }
-    final session = ref.read(authControllerProvider).valueOrNull;
-    if (session?.isLocalMode == true ||
-        PosMode.isStandaloneToken(session?.token)) {
+    if (!mounted) return;
+    if (workspaceId == null || workspaceId <= 0) {
+      setState(() {
+        _loading = false;
+        _error = 'لم يتم إعداد المتجر المحلي بعد.';
+        _orders = const [];
+      });
       return;
     }
-    try {
-      final data = await ref.read(cashierApiProvider).get('/kitchen/orders');
-      final list = <Map<String, dynamic>>[];
-      if (data['orders'] is List) {
-        for (final item in data['orders'] as List) {
-          if (item is Map) list.add(Map<String, dynamic>.from(item));
-        }
-      }
-      if (!mounted) return;
-      await OfflineStore.instance.cacheKitchen(list);
-      if (list.isNotEmpty) {
-        setState(() {
-          _orders = list;
-          _loading = false;
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (!mounted || silent) return;
-      if (_orders.isEmpty) {
-        setState(() {
-          _loading = false;
-          _error = e.message;
-        });
-      }
-    } catch (e) {
-      if (!mounted || silent) return;
-      if (_orders.isEmpty) {
-        setState(() {
-          _loading = false;
-          _error = e.toString();
-        });
-      }
-    }
+    _workspaceId = workspaceId;
+    _sub = ref
+        .read(kitchenLocalServiceProvider)
+        .watchActive(workspaceId)
+        .listen(
+          (orders) {
+            if (!mounted) return;
+            setState(() {
+              _orders = orders;
+              _loading = false;
+              _error = null;
+            });
+          },
+          onError: (Object e) {
+            if (!mounted) return;
+            setState(() {
+              _loading = false;
+              _error = e.toString();
+            });
+          },
+        );
   }
 
   Future<void> _updateStatus(String localId, String status) async {
-    final workspaceId = ref.read(workspaceIdProvider);
+    final workspaceId = _workspaceId ?? ref.read(workspaceIdProvider);
     if (workspaceId == null) return;
     try {
       await ref
@@ -138,11 +103,17 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
             orderLocalId: localId,
             status: status,
           );
-      await _load();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
+  }
+
+  String _ticketTitle(Map<String, dynamic> order) {
+    return PosLabels.kitchenHeading(
+      orderType: order['order_type']?.toString(),
+      tableName: nestedName(order['table'], fallback: ''),
+    );
   }
 
   @override
@@ -157,7 +128,7 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
           title: 'تعذر تحميل المطبخ',
           subtitle: _error,
           actionLabel: 'إعادة المحاولة',
-          onAction: _load,
+          onAction: _bind,
         ),
       );
     }
@@ -171,12 +142,12 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'طلبات التجهيز للطاولات',
+                'طلبات التجهيز',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
               ),
               SizedBox(height: 4),
               Text(
-                'كل طلب مرتبط بطاولة يظهر هنا ليتم تجهيزه ومتابعة حالته.',
+                'الطاولات والطلبات الخارجية والتوصيل تظهر هنا للشيف فقط.',
                 style: TextStyle(fontSize: 12, color: HasimColors.muted),
               ),
             ],
@@ -189,7 +160,7 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                   child: HsEmpty(title: 'لا توجد طلبات تجهيز حالياً.'),
                 )
               : RefreshIndicator(
-                  onRefresh: _load,
+                  onRefresh: _bind,
                   child: ListView.separated(
                     padding: const EdgeInsets.all(12),
                     itemCount: _orders.length,
@@ -201,6 +172,7 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                           ? (order['items'] as List).whereType<Map>()
                           : const Iterable<Map>.empty();
                       return HsCard(
+                        key: ValueKey('kitchen-${order['local_id']}'),
                         color: HasimColors.surfaceSoft,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -213,17 +185,14 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        nestedName(
-                                          order['table'],
-                                          fallback: 'طاولة غير معروفة',
-                                        ),
+                                        _ticketTitle(order),
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                           fontSize: 13,
                                         ),
                                       ),
                                       Text(
-                                        'طلب #${order['order_number'] ?? order['id']} · ${order['created_at'] ?? ''}',
+                                        '${orderDisplayLabel(order)} · ${PosLabels.orderType(order['order_type']?.toString())}',
                                         style: const TextStyle(
                                           fontSize: 11,
                                           color: HasimColors.muted,
@@ -232,14 +201,19 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                                     ],
                                   ),
                                 ),
+                                HsBadge(
+                                  label: PosLabels.status(current),
+                                  background: HasimColors.ctaSoft,
+                                  foreground: HasimColors.ctaDark,
+                                ),
                               ],
                             ),
                             if (items.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               for (final item in items)
                                 Text(
-                                  '• ${item['quantity']} × ${item['item_name'] ?? item['product_name']}'
-                                  '${item['variant_name'] != null ? ' - ${item['variant_name']}' : ''}',
+                                  '• ${item['quantity']} × ${catalogItemName(item)}'
+                                  '${item['notes'] != null && '${item['notes']}'.trim().isNotEmpty ? ' (${item['notes']})' : ''}',
                                   style: const TextStyle(fontSize: 12),
                                 ),
                             ],
@@ -302,7 +276,9 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
                                           if (v != null &&
                                               localId != null &&
                                               localId.isNotEmpty) {
-                                            _updateStatus(localId, v);
+                                            unawaited(
+                                              _updateStatus(localId, v),
+                                            );
                                           }
                                         },
                                       ),

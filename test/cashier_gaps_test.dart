@@ -12,13 +12,13 @@ import 'package:hasim_cashier/core/realtime/pos_event_source.dart';
 import 'package:hasim_cashier/features/cart/cart_controller.dart';
 
 void main() {
-  test('cart takeaway clears table and labels order type خارجي', () {
+  test('cart takeaway clears table and labels order type طلب خارجي', () {
     final cart = CartController();
     cart.setChannel(OrderChannel.table);
     cart.setTable(9);
     cart.setChannel(OrderChannel.takeaway);
     expect(cart.state.tableId, isNull);
-    expect(cart.state.channel.labelAr, 'خارجي');
+    expect(cart.state.channel.labelAr, 'طلب خارجي');
   });
 
   test('permissions gate tables and discount from Laravel map', () {
@@ -50,6 +50,14 @@ void main() {
     expect(
       CashierPermissions.canManageMenu({'workspace.manage': true}),
       isTrue,
+    );
+    expect(
+      CashierPermissions.canManageUsers({'workspace.manage': true}),
+      isTrue,
+    );
+    expect(
+      CashierPermissions.canManageUsers({'orders.create': true}),
+      isFalse,
     );
   });
 

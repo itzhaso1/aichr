@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/cashier_api.dart';
 import '../../core/audio/menu_sound_service.dart';
 import '../../core/auth/auth_controller.dart';
+import '../../core/local_db/app_database.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
+import '../../core/pos/application/local_auth_service.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_errors.dart';
 import '../../core/printing/printer_service.dart';
@@ -35,6 +37,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   final _name = TextEditingController(text: 'طابعة الشبكة');
   final _address = TextEditingController();
   PrinterTransport _transport = PrinterTransport.network;
+  List<LocalUser> _users = const [];
 
   Map<String, dynamic> get _perms => CashierPermissions.resolve(
     ref.read(cashierPermissionsProvider),
@@ -93,6 +96,22 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       }
       _ready = true;
     });
+    await _refreshUsers();
+  }
+
+  Future<void> _refreshUsers() async {
+    final workspaceId = ref.read(workspaceIdProvider);
+    if (workspaceId == null || workspaceId <= 0) return;
+    try {
+      final users = await ref
+          .read(localAuthServiceProvider)
+          .listUsers(workspaceId);
+      if (!mounted) return;
+      setState(() => _users = users);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _users = const []);
+    }
   }
 
   Future<void> _savePosSettings() async {
@@ -449,6 +468,116 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       ).showSnackBar(const SnackBar(content: Text('تمت الاستعادة.')));
     } catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e is PosException ? e.messageAr : '$e')));
+    }
+  }
+
+  Future<void> _createStaffUser() async {
+    if (!CashierPermissions.canManageUsers(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية إنشاء الحسابات.')),
+      );
+      return;
+    }
+    final workspaceId = ref.read(workspaceIdProvider);
+    if (workspaceId == null || workspaceId <= 0) return;
+    final name = TextEditingController();
+    final username = TextEditingController();
+    final pin = TextEditingController();
+    var role = 'cashier';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('حساب جديد'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: name,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'الاسم'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: username,
+                  decoration: const InputDecoration(labelText: 'اسم المستخدم'),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: pin,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'PIN (4 أرقام على الأقل)',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: role,
+                  decoration: const InputDecoration(labelText: 'الدور'),
+                  items: const [
+                    DropdownMenuItem(value: 'cashier', child: Text('كاشير')),
+                    DropdownMenuItem(value: 'chef', child: Text('شيف')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setLocal(() => role = v);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('إنشاء'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final trimmedName = name.text.trim();
+    final trimmedUser = username.text.trim();
+    final trimmedPin = pin.text.trim();
+    name.dispose();
+    username.dispose();
+    pin.dispose();
+    if (ok != true) return;
+    if (!mounted) return;
+    if (trimmedName.isEmpty || trimmedUser.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('الاسم واسم المستخدم مطلوبان.')),
+      );
+      return;
+    }
+    try {
+      await ref.read(localAuthServiceProvider).createUser(
+            workspaceId: workspaceId,
+            name: trimmedName,
+            username: trimmedUser,
+            pin: trimmedPin,
+            role: role == 'chef' ? 'chef' : 'cashier',
+          );
+      await _refreshUsers();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            role == 'chef'
+                ? 'تم إنشاء حساب الشيف. يدخل من شاشة المطبخ أو برمز PIN.'
+                : 'تم إنشاء حساب الكاشير.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
       );
@@ -458,6 +587,12 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   @override
   Widget build(BuildContext context) {
     final canManage = CashierPermissions.canManageMenu(
+      CashierPermissions.resolve(
+        ref.watch(cashierPermissionsProvider),
+        ref.watch(authControllerProvider).valueOrNull?.permissions,
+      ),
+    );
+    final canManageUsers = CashierPermissions.canManageUsers(
       CashierPermissions.resolve(
         ref.watch(cashierPermissionsProvider),
         ref.watch(authControllerProvider).valueOrNull?.permissions,
@@ -511,6 +646,51 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             ],
           ),
         ),
+        if (canManageUsers) ...[
+          const SizedBox(height: 12),
+          HsCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'حسابات الكاشير والشيف',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'حساب الكاشير يفتح نقطة البيع. حساب الشيف يفتح المطبخ فقط.',
+                  style: TextStyle(fontSize: 12, color: HasimColors.muted),
+                ),
+                const SizedBox(height: 8),
+                if (_users.isEmpty)
+                  const Text(
+                    'لا يوجد مستخدمون بعد.',
+                    style: TextStyle(fontSize: 12, color: HasimColors.muted),
+                  )
+                else
+                  for (final user in _users)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      title: Text(user.name),
+                      subtitle: Text(user.username),
+                      trailing: HsBadge(
+                        label: LocalAuthService.roleLabelAr(user.role),
+                        background: LocalAuthService.isKitchenRole(user.role)
+                            ? HasimColors.warningSoft
+                            : HasimColors.navIdleBg,
+                        foreground: HasimColors.ink,
+                      ),
+                    ),
+                const SizedBox(height: 8),
+                HsPrimaryButton(
+                  label: 'إنشاء حساب كاشير أو شيف',
+                  onPressed: _createStaffUser,
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         HsCard(
           child: Column(
