@@ -564,11 +564,23 @@ void main() {
     expect(find.text('فتح التقارير'), findsOneWidget);
     expect(find.text('فتح المطبخ'), findsOneWidget);
 
-    await openStationFromSettings(tester, 'فتح التقارير');
+    await tester.ensureVisible(find.text('فتح التقارير'));
+    await tester.tap(find.text('فتح التقارير'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.byType(DailyReportsPanel), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('فواتير اليوم'),
+      find.byType(Scrollable).last,
+      const Offset(0, -280),
+    );
     expect(find.text('فواتير اليوم'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('كل الفواتير'),
+      find.byType(Scrollable).last,
+      const Offset(0, -160),
+    );
     expect(find.text('كل الفواتير'), findsOneWidget);
-    await tester.ensureVisible(find.text('كل الفواتير'));
     await tester.tap(find.text('كل الفواتير'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

@@ -665,6 +665,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('التقارير اليومية'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.textContaining('INV-R-1'),
+      find.byType(Scrollable).first,
+      const Offset(0, -240),
+    );
     expect(find.textContaining('INV-R-1'), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
