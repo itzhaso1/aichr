@@ -48,7 +48,12 @@ class TablesRepository {
     final row = await _findTable(workspaceId, serverId: tableServerId);
     if (row == null) return null;
     final unpaid = await _unpaidOrdersForTable(row);
-    return _rowToDetailMap(row, unpaidOrders: unpaid);
+    final unpaidMaps = await _mapsForOrders(unpaid);
+    return _rowToDetailMap(
+      row,
+      unpaidOrders: unpaid,
+      unpaidOrderMaps: unpaidMaps,
+    );
   }
 
   /// Workspace-scoped local PK so the same server table id can exist in A and B.
@@ -270,7 +275,12 @@ class TablesRepository {
     final existingClient = '${payload['session_client_id'] ?? ''}';
     if (existing.status == 'occupied' && existingClient.isNotEmpty) {
       final unpaid = await _unpaidOrdersForTable(existing);
-      return _rowToDetailMap(existing, unpaidOrders: unpaid);
+      final unpaidMaps = await _mapsForOrders(unpaid);
+      return _rowToDetailMap(
+        existing,
+        unpaidOrders: unpaid,
+        unpaidOrderMaps: unpaidMaps,
+      );
     }
 
     final sessionClientId = _newId();
@@ -284,6 +294,13 @@ class TablesRepository {
       'session_client_id': sessionClientId,
       'opened_at': openedAt,
       'session_id': existing.sessionServerId,
+      'orders': const [],
+      'last_sale_items': const [],
+      'last_sale_total': 0,
+      'subtotal': 0,
+      'tax_amount': 0,
+      'discount_amount': 0,
+      'total': 0,
     };
 
     await _db.transaction(() async {
@@ -329,6 +346,7 @@ class TablesRepository {
     int? tableServerId,
     required String invoiceLocalId,
     required String invoiceNumber,
+    String? orderLocalId,
     required double total,
     List<Map<String, dynamic>> items = const [],
   }) async {
@@ -351,19 +369,16 @@ class TablesRepository {
         : DateTime.now().toUtc().toIso8601String();
     final now = DateTime.now();
     final sid = existing.serverId ?? tableServerId;
-    final orderSnapshot = [
-      for (final item in items)
-        {
-          'item_name':
-              item['item_name'] ?? item['name'] ?? item['product_name'],
-          'name': item['item_name'] ?? item['name'] ?? item['product_name'],
-          'quantity': item['quantity'] ?? 1,
-          'unit_price': item['unit_price'],
-          'total_amount': item['total_amount'] ?? item['total'],
-          'pos_status': 'completed',
-          'payment_status': 'paid',
-        },
-    ];
+    final saleOrder = _checkoutSessionOrder(
+      invoiceLocalId: invoiceLocalId,
+      invoiceNumber: invoiceNumber,
+      orderLocalId: orderLocalId,
+      total: total,
+      items: items,
+    );
+    final previousOrders = alreadyOpen
+        ? _normalizeActiveOrders(payload['orders'])
+        : const <Map<String, dynamic>>[];
     final nextPayload = {
       ...payload,
       if (sid != null) 'id': sid,
@@ -374,12 +389,28 @@ class TablesRepository {
       'last_invoice_local_id': invoiceLocalId,
       'last_invoice_number': invoiceNumber,
       'last_sale_total': total,
-      'last_sale_items': items,
+      'last_sale_items': saleOrder['items'],
       'total': total,
-      if (orderSnapshot.isNotEmpty) 'orders': orderSnapshot,
+      'orders': [...previousOrders, saleOrder],
     };
 
     await _db.transaction(() async {
+      if (!alreadyOpen) {
+        final leftovers = await _unpaidOrdersForTable(existing);
+        for (final order in leftovers) {
+          await (_db.update(_db.localOrders)..where(
+                (t) =>
+                    t.localId.equals(order.localId) &
+                    t.workspaceId.equals(workspaceId),
+              ))
+              .write(
+            LocalOrdersCompanion(
+              posStatus: const Value('cancelled'),
+              updatedAt: Value(now),
+            ),
+          );
+        }
+      }
       await (_db.update(_db.localTables)
             ..where(
               (t) =>
@@ -625,6 +656,10 @@ class TablesRepository {
       'session_client_id': null,
       'opened_at': null,
       'orders': const [],
+      'last_sale_items': const [],
+      'last_sale_total': 0,
+      'last_invoice_local_id': null,
+      'last_invoice_number': null,
       'subtotal': 0,
       'tax_amount': 0,
       'discount_amount': 0,
@@ -685,6 +720,10 @@ class TablesRepository {
       'session_client_id': null,
       'opened_at': null,
       'orders': const [],
+      'last_sale_items': const [],
+      'last_sale_total': 0,
+      'last_invoice_local_id': null,
+      'last_invoice_number': null,
       'subtotal': 0,
       'tax_amount': 0,
       'discount_amount': 0,
@@ -1269,6 +1308,7 @@ class TablesRepository {
   Map<String, dynamic> _rowToDetailMap(
     LocalTable row, {
     List<LocalOrder> unpaidOrders = const [],
+    List<Map<String, dynamic>> unpaidOrderMaps = const [],
   }) {
     final payload = _safeMap(row.payloadJson);
     final totalCents =
@@ -1278,6 +1318,11 @@ class TablesRepository {
         _payloadSessionOpen(payload);
     final sessionClientId = '${payload['session_client_id'] ?? ''}'.trim();
     final lastSale = asDouble(payload['last_sale_total'] ?? payload['total']);
+    final activeOrders = !occupied
+        ? const <Map<String, dynamic>>[]
+        : unpaidOrderMaps.isNotEmpty
+            ? unpaidOrderMaps
+            : _normalizeActiveOrders(payload['orders']);
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
@@ -1299,7 +1344,121 @@ class TablesRepository {
         'total': payload['total'] ?? Money.fromCents(totalCents),
       } else if (occupied && lastSale != null && lastSale > 0)
         'total': lastSale,
-      'orders': payload['orders'] ?? const [],
+      'orders': activeOrders,
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _mapsForOrders(
+    List<LocalOrder> orders,
+  ) async {
+    final out = <Map<String, dynamic>>[];
+    for (final order in orders) {
+      final items = await (_db.select(_db.localOrderItems)
+            ..where(
+              (t) =>
+                  t.orderLocalId.equals(order.localId) &
+                  t.isRemoved.equals(false),
+            ))
+          .get();
+      out.add({
+        'id': order.serverId ?? order.localId,
+        'local_id': order.localId,
+        'order_number': order.orderNumber ?? order.localId,
+        'pos_status': order.posStatus,
+        'payment_status': order.paymentStatus,
+        'discount_amount': Money.fromCents(order.discountAmount),
+        'tax_amount': Money.fromCents(order.taxAmount),
+        'total_amount': Money.fromCents(order.totalAmount),
+        'items': [
+          for (final item in items) _lineSnapshot({
+            'product_local_id': item.productLocalId,
+            'item_name': item.name,
+            'quantity': item.quantity,
+            'unit_price': Money.fromCents(item.unitPrice),
+            'total_amount': Money.fromCents(item.totalAmount),
+          }),
+        ],
+      });
+    }
+    return out;
+  }
+
+  Map<String, dynamic> _checkoutSessionOrder({
+    required String invoiceLocalId,
+    required String invoiceNumber,
+    String? orderLocalId,
+    required double total,
+    required List<Map<String, dynamic>> items,
+  }) {
+    final lines = [for (final item in items) _lineSnapshot(item)];
+    final lineTotal = lines.fold<double>(
+      0,
+      (sum, line) => sum + asDoubleOr(line['total_amount']),
+    );
+    return {
+      'id': orderLocalId ?? invoiceLocalId,
+      'local_id': orderLocalId ?? invoiceLocalId,
+      'invoice_local_id': invoiceLocalId,
+      'order_number': invoiceNumber,
+      'pos_status': 'completed',
+      'payment_status': 'paid',
+      'total_amount': total > 0 ? total : lineTotal,
+      'items': lines,
+    };
+  }
+
+  List<Map<String, dynamic>> _normalizeActiveOrders(dynamic raw) {
+    final rows = asMapList(raw);
+    if (rows.isEmpty) return const [];
+    final looksLikeLines = rows.every((row) {
+      if (row['items'] is List) return false;
+      return row.containsKey('item_name') ||
+          row.containsKey('quantity') ||
+          row.containsKey('unit_price') ||
+          row.containsKey('product_name');
+    });
+    if (looksLikeLines) {
+      final lines = [for (final row in rows) _lineSnapshot(row)];
+      final total = lines.fold<double>(
+        0,
+        (sum, line) => sum + asDoubleOr(line['total_amount']),
+      );
+      return [
+        {
+          'order_number': 'الطلب الحالي',
+          'pos_status': 'completed',
+          'payment_status': 'paid',
+          'total_amount': total,
+          'items': lines,
+        },
+      ];
+    }
+    return [
+      for (final row in rows)
+        {
+          ...row,
+          'items': [
+            for (final item in asMapList(row['items'])) _lineSnapshot(item),
+          ],
+        },
+    ];
+  }
+
+  Map<String, dynamic> _lineSnapshot(Map<String, dynamic> item) {
+    final name = catalogItemName(item);
+    final qty = asIntOr(item['quantity'], 1);
+    final unit = asDoubleOr(item['unit_price']);
+    final total = asDouble(item['total_amount'] ?? item['total']) ?? (unit * qty);
+    final productLocalId =
+        '${item['product_local_id'] ?? item['productLocalId'] ?? ''}'.trim();
+    return {
+      if (productLocalId.isNotEmpty) 'product_local_id': productLocalId,
+      'item_name': name,
+      'product_name': name,
+      'name': name,
+      'quantity': qty,
+      'unit_price': unit,
+      'total_amount': total,
     };
   }
 
@@ -1340,9 +1499,12 @@ class TablesRepository {
     final previous =
         previousJson == null ? const <String, dynamic>{} : _safeMap(previousJson);
     final merged = <String, dynamic>{...previous, ...boardRow};
-    // Keep detailed orders/totals if board snapshot omits them.
+    // Keep detailed orders/totals if an occupied board snapshot omits them.
+    // Never restore historical lines onto an available table.
     if (boardRow['orders'] == null && previous['orders'] != null) {
-      merged['orders'] = previous['orders'];
+      final incomingStatus = '${boardRow['status'] ?? previous['status'] ?? ''}';
+      merged['orders'] =
+          incomingStatus == 'available' ? const [] : previous['orders'];
     }
     if (boardRow['subtotal'] == null && previous['subtotal'] != null) {
       merged['subtotal'] = previous['subtotal'];

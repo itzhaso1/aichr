@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +10,7 @@ import '../../core/local_db/local_db_providers.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/pos_providers.dart';
+import '../../core/pos/application/product_image_store.dart';
 import '../../core/pos/pos_mode.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
@@ -138,8 +142,9 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           ) &&
           workspaceId != null) {
         final admin = ref.read(catalogAdminServiceProvider);
+        late final String localId;
         if (existing == null) {
-          await admin.createProduct(
+          localId = await admin.createProduct(
             workspaceId: workspaceId,
             name: '${result['name']}',
             price: asDoubleOr(result['price']),
@@ -153,9 +158,10 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             permissions: session?.permissions ?? _perms,
           );
         } else {
+          localId = '${existing['local_id'] ?? existing['id']}';
           await admin.updateProduct(
             workspaceId: workspaceId,
-            localId: '${existing['local_id'] ?? existing['id']}',
+            localId: localId,
             name: '${result['name']}',
             price: asDouble(result['price']),
             sku: result['sku'] as String?,
@@ -166,6 +172,13 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             categoryLocalId: result['category_local_id'] as String?,
           );
         }
+        await _persistProductImage(
+          workspaceId: workspaceId,
+          productLocalId: localId,
+          sourcePath: result['image_source_path'] as String?,
+          clearImage: result['clear_image'] == true,
+          permissions: session?.permissions ?? _perms,
+        );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -200,6 +213,39 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
     }
+  }
+
+  Future<void> _persistProductImage({
+    required int workspaceId,
+    required String productLocalId,
+    required String? sourcePath,
+    required bool clearImage,
+    required Map<String, dynamic> permissions,
+  }) async {
+    final admin = ref.read(catalogAdminServiceProvider);
+    if (clearImage) {
+      await admin.updateProduct(
+        workspaceId: workspaceId,
+        localId: productLocalId,
+        imagePath: null,
+        clearImage: true,
+        permissions: permissions,
+      );
+      return;
+    }
+    final source = sourcePath?.trim() ?? '';
+    if (source.isEmpty || !File(source).existsSync()) return;
+    final stored = await ProductImageStore().persist(
+      sourcePath: source,
+      workspaceId: workspaceId,
+      productLocalId: productLocalId,
+    );
+    await admin.updateProduct(
+      workspaceId: workspaceId,
+      localId: productLocalId,
+      imagePath: stored,
+      permissions: permissions,
+    );
   }
 
   Future<void> _deleteItem(Map<String, dynamic> item) async {
@@ -508,6 +554,12 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
                   padding: const EdgeInsets.all(12),
                   child: Row(
                     children: [
+                      LocalProductImage(
+                        path: '${item['image_path'] ?? ''}'.trim().isEmpty
+                            ? null
+                            : '${item['image_path']}',
+                      ),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -585,6 +637,9 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
   late final TextEditingController _currency;
   String? _categoryLocalId;
   var _active = true;
+  String? _existingImagePath;
+  String? _pickedSourcePath;
+  var _clearImage = false;
 
   String? _existingCategoryKey(Map<String, dynamic>? e) {
     if (e == null) return null;
@@ -621,6 +676,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     _currency = TextEditingController(text: '${e?['currency'] ?? 'SAR'}');
     _categoryLocalId = _existingCategoryKey(e);
     _active = e?['is_active'] != false;
+    final stored = '${e?['image_path'] ?? ''}'.trim();
+    _existingImagePath = stored.isEmpty ? null : stored;
   }
 
   @override
@@ -636,6 +693,28 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     super.dispose();
   }
 
+  String? get _previewPath {
+    if (_pickedSourcePath != null) return _pickedSourcePath;
+    if (_clearImage) return null;
+    return _existingImagePath;
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      final path = result?.files.single.path;
+      if (path == null || path.trim().isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _pickedSourcePath = path;
+        _clearImage = false;
+      });
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -649,6 +728,33 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
               TextField(
                 controller: _name,
                 decoration: const InputDecoration(labelText: 'الاسم'),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  LocalProductImage(path: _previewPath, size: 56),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _pickImage,
+                          icon: const Icon(Icons.image_outlined),
+                          label: const Text('اختيار صورة'),
+                        ),
+                        if (_previewPath != null)
+                          TextButton(
+                            onPressed: () => setState(() {
+                              _pickedSourcePath = null;
+                              _clearImage = true;
+                            }),
+                            child: const Text('إزالة الصورة'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               TextField(
                 controller: _price,
@@ -743,6 +849,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
                   : _currency.text.trim().toUpperCase(),
               'is_active': _active,
               'sort_order': widget.existing?['sort_order'] ?? 0,
+              'image_source_path': _pickedSourcePath,
+              'clear_image': _clearImage,
             });
           },
           child: const Text('حفظ'),

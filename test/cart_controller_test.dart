@@ -25,10 +25,10 @@ void main() {
     expect(state.discountAmount, 5);
     expect(state.taxAmount, 1.5);
     expect(state.total, 16.5);
-    expect(state.channel, OrderChannel.takeaway);
+    expect(state.channel, OrderChannel.table);
 
     final payload = cart.toOrderPayload(clientReference: 'ref-1');
-    expect(payload['order_type'], 'takeaway');
+    expect(payload['order_type'], 'table');
     expect(payload['client_reference'], 'ref-1');
     expect(payload['items'], isA<List>());
   });
@@ -47,5 +47,16 @@ void main() {
     cart.setChannel(OrderChannel.delivery);
     expect(cart.state.channel, OrderChannel.delivery);
     expect(cart.toOrderPayload(clientReference: 'x')['order_type'], 'delivery');
+  });
+
+  test('cashier new-order choices exclude takeaway', () {
+    expect(
+      OrderChannelCashier.cashierChoices,
+      [OrderChannel.table, OrderChannel.delivery],
+    );
+    expect(
+      OrderChannelCashier.cashierChoices.contains(OrderChannel.takeaway),
+      isFalse,
+    );
   });
 }

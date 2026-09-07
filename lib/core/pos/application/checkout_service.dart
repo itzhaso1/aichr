@@ -293,6 +293,7 @@ class CheckoutService {
         'items': [
           for (final line in quote.lineResults)
             {
+              'product_local_id': line.line.productLocalId,
               'item_name': line.line.name,
               'quantity': line.line.quantity,
               'unit_price': line.line.unitPrice,
@@ -417,11 +418,15 @@ class CheckoutService {
           tableServerId: cmd.tableServerId,
           invoiceLocalId: invoiceId,
           invoiceNumber: invoiceNumber,
+          orderLocalId: orderId,
           total: quote.total,
           items: [
             for (final line in quote.lineResults)
               {
+                'product_local_id': line.line.productLocalId,
                 'item_name': line.line.name,
+                'product_name': line.line.name,
+                'name': line.line.name,
                 'quantity': line.line.quantity,
                 'unit_price': line.line.unitPrice,
                 'total_amount': line.total,

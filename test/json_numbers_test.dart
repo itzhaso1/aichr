@@ -27,6 +27,18 @@ void main() {
     expect(nestedField({'name': 'x'}, 'name'), 'x');
   });
 
+  test('catalogItemName never interpolates null as the word null', () {
+    expect(catalogItemName({'item_name': 'برجر'}), 'برجر');
+    expect(catalogItemName({'product_name': 'كولا'}), 'كولا');
+    expect(catalogItemName({'name': 'بطاطس'}), 'بطاطس');
+    expect(catalogItemName({'product_name': null, 'name': 'شاي'}), 'شاي');
+    expect(catalogItemName({'product_name': null}), 'صنف');
+    expect(catalogItemName(null), 'صنف');
+    expect(orderDisplayLabel({'order_number': null, 'id': null}), 'طلب الطاولة');
+    expect(orderDisplayLabel({'order_number': 'INV-9'}), '#INV-9');
+    expect(orderDisplayLabel({'id': 'abc'}), '#abc');
+  });
+
   test('productBelongsToCategory matches local UUID and server ids', () {
     expect(
       productBelongsToCategory(

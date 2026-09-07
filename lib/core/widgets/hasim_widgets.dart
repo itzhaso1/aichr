@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../network/link_policy.dart';
+import '../pos/application/product_image_store.dart';
 import '../theme/hasim_colors.dart';
 import '../theme/hasim_radius.dart';
 import '../theme/hasim_spacing.dart';
@@ -330,7 +332,7 @@ class ProductCard extends StatelessWidget {
     required this.priceLabel,
     required this.currency,
     required this.onAdd,
-    this.imageUrl,
+    this.imagePath,
     this.sku,
     this.available = true,
   });
@@ -338,7 +340,7 @@ class ProductCard extends StatelessWidget {
   final String name;
   final String priceLabel;
   final String currency;
-  final String? imageUrl;
+  final String? imagePath;
   final String? sku;
   final bool available;
   final VoidCallback onAdd;
@@ -383,17 +385,10 @@ class ProductCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (showImage)
-                        const Expanded(
+                        Expanded(
                           child: ColoredBox(
                             color: HasimColors.surfaceSoft,
-                            // Offline build: never load network images under a
-                            // hovering mouse — CachedNetworkImage rebuilds
-                            // trip mouse_tracker / no-size asserts.
-                            child: Icon(
-                              Icons.restaurant_menu,
-                              color: Color(0xFFCBD5E1),
-                              size: 36,
-                            ),
+                            child: _productImage(imagePath),
                           ),
                         ),
                       Padding(
@@ -489,6 +484,51 @@ class ProductCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+Widget _productImage(String? path) {
+  const placeholder = Icon(
+    Icons.restaurant_menu,
+    color: Color(0xFFCBD5E1),
+    size: 36,
+  );
+  if (kIsWeb) return placeholder;
+  final file = ProductImageStore.fileIfExists(path);
+  if (file == null) return placeholder;
+  return Image.file(
+    file,
+    fit: BoxFit.cover,
+    width: double.infinity,
+    height: double.infinity,
+    gaplessPlayback: true,
+    errorBuilder: (_, _, _) => placeholder,
+  );
+}
+
+class LocalProductImage extends StatelessWidget {
+  const LocalProductImage({
+    super.key,
+    required this.path,
+    this.size = 44,
+  });
+
+  final String? path;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(HasimRadius.sm),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: ColoredBox(
+          color: HasimColors.surfaceSoft,
+          child: _productImage(path),
+        ),
+      ),
     );
   }
 }

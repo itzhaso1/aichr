@@ -99,14 +99,19 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   List<Map<String, dynamic>> get _orders {
+    final occupied = _detail?['status'] == 'occupied' ||
+        _detail?['session_open'] == true;
     final raw = _detail?['orders'];
-    final server = raw is List
+    final fromDetail = raw is List
         ? raw
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList()
         : <Map<String, dynamic>>[];
-    return _mergePendingOrders(server);
+    if (!occupied) {
+      return _localPendingOrders;
+    }
+    return _mergePendingOrders(fromDetail);
   }
 
   int? get _workspaceId => ref.read(workspaceIdProvider);
@@ -176,8 +181,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           'order_item_id': rawId is num ? rawId.toInt() : (rawId?.hashCode ?? 0),
           'item_local_id': '${item['local_id'] ?? item['id'] ?? ''}',
           'pos_menu_item_id': item['pos_menu_item_id'] ?? item['product_id'],
-          'name':
-              '${item['product_name'] ?? item['name']}${item['variant_name'] != null ? ' - ${item['variant_name']}' : ''}',
+          'name': catalogItemName(item),
           'quantity': asIntOr(item['quantity'], 1),
           'unit_price': asDoubleOr(item['unit_price']),
           'total': asDoubleOr(item['total_amount']),
@@ -671,7 +675,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('هل أنت متأكد من حذف هذا الطلب؟'),
         content: Text(
-          'سيتم حذف الطلب #${order['order_number'] ?? order['id']} من الطاولة.',
+          'سيتم حذف الطلب ${orderDisplayLabel(order)} من الطاولة.',
         ),
         actions: [
           TextButton(
@@ -1068,7 +1072,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         orders: billable
             .map(
               (o) => {
-                'label': '#${o['order_number'] ?? o['id']}',
+                'label': orderDisplayLabel(o),
                 'total': asDoubleOr(o['total_amount']),
               },
             )
@@ -1747,7 +1751,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      '#${order['order_number'] ?? order['id']}',
+                                      orderDisplayLabel(order),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w900,
                                       ),
@@ -1791,8 +1795,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          '${item['product_name']}'
-                                          '${item['variant_name'] != null ? ' - ${item['variant_name']}' : ''}',
+                                          catalogItemName(item),
                                           style: const TextStyle(fontSize: 12),
                                         ),
                                       ),

@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hasim_cashier/core/config/app_config.dart';
 import 'package:hasim_cashier/core/local_db/app_database.dart';
 import 'package:hasim_cashier/core/pos/application/backup_service.dart';
 import 'package:hasim_cashier/core/pos/application/catalog_admin_service.dart';
@@ -405,7 +406,11 @@ void main() {
       expect(PosMode.admitRestoredSession('local-offline'), isFalse);
       expect(PosMode.admitRestoredSession(null), isFalse);
       expect(PosMode.admitRestoredSession(''), isFalse);
-      expect(PosMode.admitRestoredSession('laravel-jwt'), isTrue);
+      if (AppConfig.offlineOnly) {
+        expect(PosMode.admitRestoredSession('laravel-jwt'), isFalse);
+      } else {
+        expect(PosMode.admitRestoredSession('laravel-jwt'), isTrue);
+      }
     });
   });
 

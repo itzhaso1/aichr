@@ -533,7 +533,7 @@ void main() {
     expect(cart.state.subtotal, 20);
     expect(cart.state.taxAmount, 1.5);
     expect(cart.state.total, 16.5);
-    expect(cart.state.channel, OrderChannel.takeaway);
+    expect(cart.state.channel, OrderChannel.table);
   });
 
   test('money engine uses integer cents so 0.1+0.2 equals 0.3', () {
