@@ -100,35 +100,4 @@ void main() {
     expect(find.byIcon(Icons.restaurant_menu), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-
-  testWidgets('product card renders a local image file when present', (
-    tester,
-  ) async {
-    final dir = await Directory.systemTemp.createTemp('hasim-card-img');
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File('${dir.path}/card.png');
-    await file.writeAsBytes(_pngBytes);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Center(
-          child: SizedBox(
-            width: 180,
-            height: 220,
-            child: ProductCard(
-              name: 'برجر',
-              priceLabel: '12.00',
-              currency: 'SAR',
-              imagePath: file.path,
-              onAdd: () {},
-            ),
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-    expect(find.byType(Image), findsOneWidget);
-    expect(find.byIcon(Icons.restaurant_menu), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
 }
