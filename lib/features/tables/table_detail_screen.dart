@@ -1596,17 +1596,20 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           if (!_hasSession) ...[
             _action('QR المنيو', Icons.qr_code_2_outlined, _showQr),
           ] else ...[
-            ListTile(
-              dense: true,
-              leading: Icon(
-                _moreOpen ? Icons.expand_less : Icons.expand_more,
-                size: 20,
+            Material(
+              color: Colors.transparent,
+              child: ListTile(
+                dense: true,
+                leading: Icon(
+                  _moreOpen ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                ),
+                title: const Text(
+                  'المزيد',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                ),
+                onTap: () => setState(() => _moreOpen = !_moreOpen),
               ),
-              title: const Text(
-                'المزيد',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-              ),
-              onTap: () => setState(() => _moreOpen = !_moreOpen),
             ),
             if (_moreOpen) ...[
               _action(
@@ -1646,23 +1649,26 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     VoidCallback onTap, {
     bool danger = false,
   }) {
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        icon,
-        color: danger ? HasimColors.danger : HasimColors.ink,
-        size: 20,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          fontSize: 13,
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          icon,
           color: danger ? HasimColors.danger : HasimColors.ink,
+          size: 20,
         ),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+            color: danger ? HasimColors.danger : HasimColors.ink,
+          ),
+        ),
+        trailing: const Icon(Icons.chevron_left, size: 18),
+        onTap: onTap,
       ),
-      trailing: const Icon(Icons.chevron_left, size: 18),
-      onTap: onTap,
     );
   }
 

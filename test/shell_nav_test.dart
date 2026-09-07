@@ -4,9 +4,11 @@ import 'package:drift/drift.dart' hide isNull;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hasim_cashier/core/api/cashier_api.dart';
 import 'package:hasim_cashier/core/auth/auth_controller.dart';
+import 'package:hasim_cashier/core/device/device_identity.dart';
 import 'package:hasim_cashier/core/local_db/app_database.dart';
 import 'package:hasim_cashier/core/local_db/local_db_providers.dart';
 import 'package:hasim_cashier/core/offline/offline_store.dart';
@@ -21,6 +23,13 @@ import 'package:hasim_cashier/features/invoices/invoices_list.dart';
 import 'package:hasim_cashier/features/reports/daily_reports_panel.dart';
 import 'package:hasim_cashier/features/tables/tables_board.dart';
 import 'package:hive/hive.dart';
+
+class _ImmediateDeviceIdentity extends DeviceIdentity {
+  _ImmediateDeviceIdentity() : super(const FlutterSecureStorage());
+
+  @override
+  Future<String> getOrCreateDeviceId() async => 'test-device';
+}
 
 class _SilentAuthRepository extends AuthRepository {
   _SilentAuthRepository(super._api, super._storage);
@@ -144,6 +153,9 @@ void main() {
           ),
           currentStoreIdProvider.overrideWith((ref) => 'store-1'),
           currentShiftIdProvider.overrideWith((ref) => 'shift-1'),
+          deviceIdentityProvider.overrideWith(
+            (ref) => _ImmediateDeviceIdentity(),
+          ),
           cashierPermissionsProvider.overrideWith(
             (ref) => Map<String, dynamic>.from(
               LocalAuthService.adminPermissions,
@@ -272,12 +284,28 @@ void main() {
 
     await tester.tap(find.text('إنشاء الطلب'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump(const Duration(seconds: 2));
     expect(tester.takeException(), isNull);
-    expect(find.text('تم حفظ الفاتورة'), findsOneWidget);
 
     final invoices = await db.select(db.localInvoices).get();
-    expect(invoices.length, greaterThanOrEqualTo(2));
+    final snackTexts = tester
+        .widgetList<Text>(find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .toList();
+    expect(
+      invoices.length,
+      greaterThanOrEqualTo(2),
+      reason: 'checkout did not persist an invoice. snackbars=$snackTexts',
+    );
+    expect(
+      find.text('تم حفظ الفاتورة'),
+      findsOneWidget,
+      reason: 'snackbars=$snackTexts invoiceCount=${invoices.length}',
+    );
     final table = await (db.select(db.localTables)
           ..where((t) => t.localId.equals('table-1')))
         .getSingle();
@@ -328,5 +356,8 @@ void main() {
             !closed.payloadJson.contains('"opened_at":"'),
         isTrue);
     expect((await db.select(db.localInvoices).get()).length, invoices.length);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 50));
   });
 }
