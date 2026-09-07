@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,11 +12,14 @@ import 'package:hasim_cashier/core/local_db/local_db_providers.dart';
 import 'package:hasim_cashier/core/offline/offline_store.dart';
 import 'package:hasim_cashier/core/permissions/permissions_provider.dart';
 import 'package:hasim_cashier/core/pos/application/local_auth_service.dart';
+import 'package:hasim_cashier/core/pos/application/pos_providers.dart';
 import 'package:hasim_cashier/core/pos/pos_mode.dart';
 import 'package:hasim_cashier/core/widgets/hasim_widgets.dart';
+import 'package:hasim_cashier/core/widgets/occupied_duration_label.dart';
 import 'package:hasim_cashier/features/home/shell_screen.dart';
 import 'package:hasim_cashier/features/invoices/invoices_list.dart';
 import 'package:hasim_cashier/features/reports/daily_reports_panel.dart';
+import 'package:hasim_cashier/features/tables/tables_board.dart';
 import 'package:hive/hive.dart';
 
 class _SilentAuthRepository extends AuthRepository {
@@ -99,6 +102,27 @@ void main() {
             createdAt: now,
           ),
         );
+    await db.into(db.localShifts).insert(
+          LocalShiftsCompanion.insert(
+            localId: 'shift-1',
+            workspaceId: ws,
+            openedAt: now,
+            status: const Value('open'),
+          ),
+        );
+    await db.into(db.localTables).insert(
+          LocalTablesCompanion.insert(
+            localId: 'table-1',
+            workspaceId: ws,
+            serverId: const Value(1),
+            name: 'طاولة 1',
+            status: const Value('available'),
+            payloadJson: const Value(
+              '{"id":1,"name":"طاولة 1","status":"available"}',
+            ),
+            updatedAt: now,
+          ),
+        );
   });
 
   tearDown(() async {
@@ -118,6 +142,8 @@ void main() {
           workspaceIdProvider.overrideWith(
             (ref) => PosMode.standaloneWorkspaceId,
           ),
+          currentStoreIdProvider.overrideWith((ref) => 'store-1'),
+          currentShiftIdProvider.overrideWith((ref) => 'shift-1'),
           cashierPermissionsProvider.overrideWith(
             (ref) => Map<String, dynamic>.from(
               LocalAuthService.adminPermissions,
@@ -147,6 +173,15 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  Future<void> tapNav(WidgetTester tester, String label) async {
+    final finder = find.text(label);
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    await tester.tap(finder);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
   testWidgets('arabic top nav opens invoices and reports', (tester) async {
     await pumpShell(tester, size: const Size(1400, 900));
 
@@ -156,21 +191,15 @@ void main() {
     expect(find.text('التقارير'), findsOneWidget);
     expect(find.text('العملاء'), findsNothing);
 
-    await tester.tap(find.text('الفواتير'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tapNav(tester, 'الفواتير');
     expect(find.byType(InvoicesList), findsOneWidget);
     expect(find.text('INV-TEST-1'), findsOneWidget);
 
-    await tester.tap(find.text('التقارير'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tapNav(tester, 'التقارير');
     expect(find.byType(DailyReportsPanel), findsOneWidget);
     expect(find.text('التقارير اليومية'), findsOneWidget);
 
-    await tester.tap(find.text('الكاشير'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tapNav(tester, 'الكاشير');
     expect(find.text('شاي اختبار'), findsWidgets);
     expect(find.text('برجر اختبار'), findsWidgets);
     expect(find.text('مشروبات'), findsWidgets);
@@ -196,5 +225,108 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('شاي اختبار'), findsWidgets);
     expect(find.text('برجر اختبار'), findsNothing);
+  });
+
+  testWidgets('invoices and reports layout at common Windows sizes',
+      (tester) async {
+    for (final size in const [
+      Size(1280, 720),
+      Size(1024, 768),
+      Size(800, 600),
+    ]) {
+      await pumpShell(tester, size: size);
+      await tapNav(tester, 'الفواتير');
+      expect(tester.takeException(), isNull);
+      expect(find.byType(InvoicesList), findsOneWidget);
+      expect(find.text('INV-TEST-1'), findsOneWidget);
+
+      await tapNav(tester, 'التقارير');
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DailyReportsPanel), findsOneWidget);
+      expect(find.text('التقارير اليومية'), findsOneWidget);
+      expect(find.textContaining('فواتير'), findsWidgets);
+    }
+  });
+
+  testWidgets('checkout writes invoice then occupies the selected table',
+      (tester) async {
+    await pumpShell(tester, size: const Size(1400, 900));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(ProductCard), findsWidgets);
+    await tester.tap(find.byType(ProductCard).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('السلة فارغة.'), findsNothing);
+
+    await tester.tap(find.text('طاولة').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('اختر الطاولة'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('طاولة 1'), findsWidgets);
+    await tester.tap(find.text('طاولة 1').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.text('إنشاء الطلب'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(tester.takeException(), isNull);
+    expect(find.text('تم حفظ الفاتورة'), findsOneWidget);
+
+    final invoices = await db.select(db.localInvoices).get();
+    expect(invoices.length, greaterThanOrEqualTo(2));
+    final table = await (db.select(db.localTables)
+          ..where((t) => t.localId.equals('table-1')))
+        .getSingle();
+    expect(table.status, 'occupied');
+    expect(table.payloadJson.contains('opened_at'), isTrue);
+
+    await tester.tap(find.text('تم'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tapNav(tester, 'الفواتير');
+    expect(find.byType(InvoicesList), findsOneWidget);
+    expect(find.text('INV-TEST-1'), findsOneWidget);
+    expect(find.textContaining('INV-'), findsWidgets);
+
+    await tapNav(tester, 'التقارير');
+    expect(find.byType(DailyReportsPanel), findsOneWidget);
+    expect(find.text('التقارير اليومية'), findsOneWidget);
+
+    await tapNav(tester, 'الطاولات');
+    expect(find.byType(TablesBoard), findsOneWidget);
+    expect(find.text('مشغولة'), findsWidgets);
+    expect(find.byType(OccupiedDurationLabel), findsWidgets);
+    expect(find.textContaining(RegExp(r'\d{2}:\d{2}:\d{2}')), findsWidgets);
+
+    await tester.tap(find.text('طاولة 1').first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('إغلاق الطاولة'), findsOneWidget);
+    await tester.tap(find.text('إغلاق الطاولة'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('التالي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('التالي'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('إتمام الإغلاق'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final closed = await (db.select(db.localTables)
+          ..where((t) => t.localId.equals('table-1')))
+        .getSingle();
+    expect(closed.status, 'available');
+    expect(closed.payloadJson.contains('"opened_at":null') ||
+            !closed.payloadJson.contains('"opened_at":"'),
+        isTrue);
+    expect((await db.select(db.localInvoices).get()).length, invoices.length);
   });
 }

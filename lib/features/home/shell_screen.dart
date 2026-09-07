@@ -63,7 +63,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   @override
   void initState() {
     super.initState();
-    _loadBootstrap();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadBootstrap();
+    });
   }
 
   @override
@@ -75,46 +77,49 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   Future<void> _loadBootstrap() async {
     if (_bootstrapInFlight) return;
     _bootstrapInFlight = true;
-    // Seed permissions from auth session immediately so reports/nav aren't
-    // hidden while bootstrap is in-flight (root cause of missing reports).
-    final session = ref.read(authControllerProvider).valueOrNull;
-    final sessionPerms = session?.permissions;
-    if (sessionPerms != null &&
-        sessionPerms.isNotEmpty &&
-        ref.read(cashierPermissionsProvider).isEmpty) {
-      ref.read(cashierPermissionsProvider.notifier).state =
-          Map<String, dynamic>.from(sessionPerms);
-    }
-    // Offline-only: local SQLite path only — never hit API / sync.
-    final store = await ref.read(localAuthServiceProvider).anyStore();
-    if (store != null) {
-      ref.read(currentStoreIdProvider.notifier).state = store.localId;
-      ref.read(posConnectedModeProvider.notifier).state = false;
-      ref.read(cartControllerProvider.notifier).setTaxRate(store.taxRate);
-    }
-    final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId != null) {
-      final shift = await ref
-          .read(shiftServiceProvider)
-          .currentOpen(workspaceId);
-      if (shift != null) {
-        ref.read(currentShiftIdProvider.notifier).state = shift.localId;
+    try {
+      // Seed permissions from the PIN/session. Never replace a non-empty map
+      // with {} — that blocks checkout with "لا تملك صلاحية إنشاء طلبات".
+      final session = ref.read(authControllerProvider).valueOrNull;
+      final sessionPerms = session?.permissions;
+      if (sessionPerms != null &&
+          sessionPerms.isNotEmpty &&
+          ref.read(cashierPermissionsProvider).isEmpty) {
+        ref.read(cashierPermissionsProvider.notifier).state =
+            Map<String, dynamic>.from(sessionPerms);
       }
+      // Offline-only: local SQLite path only — never hit API / sync.
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      if (store != null) {
+        ref.read(currentStoreIdProvider.notifier).state = store.localId;
+        ref.read(posConnectedModeProvider.notifier).state = false;
+        ref.read(cartControllerProvider.notifier).setTaxRate(store.taxRate);
+      }
+      final workspaceId = ref.read(workspaceIdProvider);
+      if (workspaceId != null) {
+        final shift = await ref
+            .read(shiftServiceProvider)
+            .currentOpen(workspaceId);
+        if (shift != null) {
+          ref.read(currentShiftIdProvider.notifier).state = shift.localId;
+        }
+      }
+      _applyBootstrapPayload({
+        'pos_enabled': true,
+        'permissions': sessionPerms ?? const {},
+        'workspace': session?.workspace,
+        'user': session?.user,
+        'settings': {'tax_rate': store?.taxRate ?? 0},
+      }, fromCache: true);
+      if (workspaceId != null) {
+        ref.invalidate(localPosReadyProvider(workspaceId));
+        ref.invalidate(catalogItemsProvider);
+        ref.invalidate(categoriesProvider);
+      }
+    } finally {
+      _bootstrapInFlight = false;
+      if (mounted) setState(() {});
     }
-    _applyBootstrapPayload({
-      'pos_enabled': true,
-      'permissions': sessionPerms ?? const {},
-      'workspace': session?.workspace,
-      'user': session?.user,
-      'settings': {'tax_rate': store?.taxRate ?? 0},
-    }, fromCache: true);
-    if (workspaceId != null) {
-      ref.invalidate(localPosReadyProvider(workspaceId));
-      ref.invalidate(catalogItemsProvider);
-      ref.invalidate(categoriesProvider);
-    }
-    if (mounted) setState(() {});
-    _bootstrapInFlight = false;
   }
 
   void _applyBootstrapPayload(
@@ -129,19 +134,21 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     }
     if (data['permissions'] is Map) {
       final perms = Map<String, dynamic>.from(data['permissions'] as Map);
-      ref.read(cashierPermissionsProvider.notifier).state = perms;
-      ref
-          .read(authControllerProvider.notifier)
-          .applyBootstrapSnapshot(
-            permissions: perms,
-            workspace: data['workspace'] is Map
-                ? Map<String, dynamic>.from(data['workspace'] as Map)
-                : null,
-            entitlements: data['entitlements'] is Map
-                ? Map<String, dynamic>.from(data['entitlements'] as Map)
-                : null,
-            posEnabled: data['pos_enabled'] == true ? true : null,
-          );
+      if (perms.isNotEmpty) {
+        ref.read(cashierPermissionsProvider.notifier).state = perms;
+        ref
+            .read(authControllerProvider.notifier)
+            .applyBootstrapSnapshot(
+              permissions: perms,
+              workspace: data['workspace'] is Map
+                  ? Map<String, dynamic>.from(data['workspace'] as Map)
+                  : null,
+              entitlements: data['entitlements'] is Map
+                  ? Map<String, dynamic>.from(data['entitlements'] as Map)
+                  : null,
+              posEnabled: data['pos_enabled'] == true ? true : null,
+            );
+      }
     }
     if (mounted) setState(() {});
   }
@@ -282,7 +289,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     if (_checkoutInFlight) return;
     final cart = ref.read(cartControllerProvider);
     if (cart.lines.isEmpty) return;
-    final perms = ref.read(cashierPermissionsProvider);
+    final session = ref.read(authControllerProvider).valueOrNull;
+    final perms = CashierPermissions.resolve(
+      ref.read(cashierPermissionsProvider),
+      session?.permissions,
+    );
     if (!CashierPermissions.canCreateOrders(perms)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('لا تملك صلاحية إنشاء طلبات.')),
@@ -305,8 +316,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       ).showSnackBar(const SnackBar(content: Text('لا توجد مساحة عمل محددة.')));
       return;
     }
-
-    final session = ref.read(authControllerProvider).valueOrNull;
 
     var shiftId = ref.read(currentShiftIdProvider);
     shiftId ??= (await ref.read(shiftServiceProvider).currentOpen(workspaceId))
@@ -373,15 +382,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         if (tableLocalId.isEmpty) tableLocalId = null;
         tableServerId = asInt(match['id'] ?? match['server_id']) ?? tableServerId;
       }
-      String? sessionId = tableLocalId == null
-          ? null
-          : await ref
-                .read(tableSessionServiceProvider)
-                .open(
-                  workspaceId: workspaceId,
-                  tableLocalId: tableLocalId,
-                  openedByUserId: ref.read(currentLocalUserIdProvider),
-                );
       final store = await ref.read(localAuthServiceProvider).anyStore();
       final resolvedPerms = CashierPermissions.resolve(
         ref.read(cashierPermissionsProvider),
@@ -400,7 +400,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               payments: payments,
               tableLocalId: tableLocalId,
               tableServerId: tableServerId,
-              sessionLocalId: sessionId,
               customerLocalId: cart.customerLocalId,
               notes: cart.notes,
               orderDiscountAmount: cart.discountAmount,

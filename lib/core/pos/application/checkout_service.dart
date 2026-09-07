@@ -328,30 +328,6 @@ class CheckoutService {
           );
       await _fault(CheckoutFaultPoint.afterInvoice);
 
-      final tables = _tables;
-      if (tables != null &&
-          ((cmd.tableLocalId != null && cmd.tableLocalId!.trim().isNotEmpty) ||
-              cmd.tableServerId != null)) {
-        await tables.occupyFromCheckout(
-          workspaceId: cmd.workspaceId,
-          deviceId: cmd.deviceId,
-          tableLocalId: cmd.tableLocalId,
-          tableServerId: cmd.tableServerId,
-          invoiceLocalId: invoiceId,
-          invoiceNumber: invoiceNumber,
-          total: quote.total,
-          items: [
-            for (final line in quote.lineResults)
-              {
-                'item_name': line.line.name,
-                'quantity': line.line.quantity,
-                'unit_price': line.line.unitPrice,
-                'total_amount': line.total,
-              },
-          ],
-        );
-      }
-
       for (final p in cmd.payments) {
         await _db
             .into(_db.localPayments)
@@ -427,6 +403,30 @@ class CheckoutService {
           workspaceId: cmd.workspaceId,
           channel: cmd.clearDraftChannel!,
           tableLocalId: cmd.clearDraftTableLocalId,
+        );
+      }
+
+      final tables = _tables;
+      if (tables != null &&
+          ((cmd.tableLocalId != null && cmd.tableLocalId!.trim().isNotEmpty) ||
+              cmd.tableServerId != null)) {
+        await tables.occupyFromCheckout(
+          workspaceId: cmd.workspaceId,
+          deviceId: cmd.deviceId,
+          tableLocalId: cmd.tableLocalId,
+          tableServerId: cmd.tableServerId,
+          invoiceLocalId: invoiceId,
+          invoiceNumber: invoiceNumber,
+          total: quote.total,
+          items: [
+            for (final line in quote.lineResults)
+              {
+                'item_name': line.line.name,
+                'quantity': line.line.quantity,
+                'unit_price': line.line.unitPrice,
+                'total_amount': line.total,
+              },
+          ],
         );
       }
 

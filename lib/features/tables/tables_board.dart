@@ -287,31 +287,42 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   ],
                 ),
               ),
-              PosTap(
-                onTap: _addTable,
-                child: const Padding(
-                  padding: EdgeInsets.all(8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.add, color: HasimColors.brand),
-                      SizedBox(width: 4),
-                      Text(
-                        'إضافة طاولة',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: HasimColors.brand,
+                      PosTap(
+                        onTap: _addTable,
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.add, color: HasimColors.brand),
+                              SizedBox(width: 4),
+                              Text(
+                                'إضافة طاولة',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: HasimColors.brand,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      PosTap(
+                        onTap: _load,
+                        child: const Padding(
+                          padding: EdgeInsets.all(8),
+                          child: Icon(Icons.refresh),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ),
-              PosTap(
-                onTap: _load,
-                child: const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Icon(Icons.refresh),
                 ),
               ),
             ],
@@ -328,20 +339,35 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                     onAction: _addTable,
                   ),
                 )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: GridView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: crossAxis,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 1.15,
-                    ),
-                    itemCount: _tables.length,
-                    itemBuilder: (context, index) =>
-                        _tableCard(_tables[index]),
-                  ),
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final maxW = constraints.maxWidth.isFinite &&
+                            constraints.maxWidth > 0
+                        ? constraints.maxWidth
+                        : MediaQuery.sizeOf(context).width;
+                    final tileW =
+                        (maxW - (10 * (crossAxis - 1)) - 24) / crossAxis;
+                    final tileH = tileW < 160 ? 188.0 : 200.0;
+                    final ratio = tileW > 0 ? tileW / tileH : 0.9;
+                    return RefreshIndicator(
+                      onRefresh: _load,
+                      child: GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                        gridDelegate:
+                            SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxis,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: ratio.isFinite && ratio > 0
+                              ? ratio
+                              : 0.9,
+                        ),
+                        itemCount: _tables.length,
+                        itemBuilder: (context, index) =>
+                            _tableCard(_tables[index]),
+                      ),
+                    );
+                  },
                 ),
         ),
       ],
@@ -363,6 +389,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(HasimRadius.md),
+      clipBehavior: Clip.antiAlias,
       child: PosTap(
         onTap: id == null ? null : () => openTableWorkspace(ref, id),
         child: Container(
@@ -386,6 +413,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                       Expanded(
                         child: Text(
                           '${table['name']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w900,

@@ -80,6 +80,19 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             .buildDailyReport(workspaceId: workspaceId, date: _date)
             .timeout(const Duration(seconds: 5));
       }
+      final summary = asStringKeyedMap(local['summary']);
+      final invoiceRows = asMapList(local['invoices']);
+      if (invoiceRows.isEmpty && asIntOr(summary['invoices_count']) == 0) {
+        final fromFinance = await ref
+            .read(localFinanceRepositoryProvider)
+            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
+        final financeSummary = asStringKeyedMap(fromFinance['summary']);
+        if (asMapList(fromFinance['invoices']).isNotEmpty ||
+            asIntOr(financeSummary['invoices_count']) > 0) {
+          local = fromFinance;
+        }
+      }
       if (!mounted) return;
       setState(() {
         _data = local;
@@ -212,12 +225,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
         children: [
           Row(
             children: [
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'التقارير اليومية',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
@@ -225,7 +240,9 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                     ),
                     Text(
                       'ملخص يومي من المبيعات والفواتير المحلية',
-                      style: const TextStyle(
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: 11,
                         color: HasimColors.muted,
                       ),
@@ -233,19 +250,26 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                   ],
                 ),
               ),
-              OutlinedButton(
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _date,
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime.now(),
-                  );
-                  if (picked == null) return;
-                  setState(() => _date = picked);
-                  await _load();
-                },
-                child: Text(_q),
+              const SizedBox(width: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _date,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now(),
+                      );
+                      if (picked == null) return;
+                      setState(() => _date = picked);
+                      await _load();
+                    },
+                    child: Text(_q),
+                  ),
+                ),
               ),
             ],
           ),
@@ -619,14 +643,22 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             Expanded(
               child: Text(
                 title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-            Text(
-              trailing,
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                color: highlight ? HasimColors.ctaDark : HasimColors.ink,
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                trailing,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: highlight ? HasimColors.ctaDark : HasimColors.ink,
+                ),
               ),
             ),
           ],

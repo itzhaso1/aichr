@@ -9,14 +9,22 @@ class DeviceIdentity {
 
   final FlutterSecureStorage _storage;
   final _uuid = const Uuid();
+  String? _memoryId;
 
   Future<String> getOrCreateDeviceId() async {
-    final existing = await _storage.read(key: storageKey);
-    if (existing != null && existing.trim().isNotEmpty) {
-      return existing.trim();
+    final memory = _memoryId;
+    if (memory != null && memory.isNotEmpty) return memory;
+    try {
+      final existing = await _storage.read(key: storageKey);
+      if (existing != null && existing.trim().isNotEmpty) {
+        return _memoryId = existing.trim();
+      }
+      final created = _uuid.v4();
+      await _storage.write(key: storageKey, value: created);
+      return _memoryId = created;
+    } catch (_) {
+      // Plugin/storage unavailable (tests, locked keychain): still allow checkout.
+      return _memoryId = _uuid.v4();
     }
-    final created = _uuid.v4();
-    await _storage.write(key: storageKey, value: created);
-    return created;
   }
 }

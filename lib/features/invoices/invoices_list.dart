@@ -174,7 +174,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       }
     });
     ref.listen<int>(invoicesRevisionProvider, (prev, next) {
-      if (prev != next) _load();
+      if (prev != next) _load(silent: true);
     });
     try {
       return _buildBody();
@@ -199,21 +199,25 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Row(
             children: [
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'فواتير الكاشير المغلقة',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    SizedBox(height: 2),
                     Text(
                       'تُحفظ الفواتير على هذا الجهاز حتى بدون طابعة.',
-                      style: const TextStyle(
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: 12,
                         color: HasimColors.muted,
                       ),
@@ -221,21 +225,33 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                   ],
                 ),
               ),
-              OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.calendar_today, size: 16),
-                label: Text(_dateQuery),
-              ),
-              if (_dateFilter != null) ...[
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () async {
-                    setState(() => _dateFilter = null);
-                    await _load();
-                  },
-                  child: const Text('الكل'),
+              const SizedBox(width: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _pickDate,
+                        icon: const Icon(Icons.calendar_today, size: 16),
+                        label: Text(_dateQuery),
+                      ),
+                      if (_dateFilter != null) ...[
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () async {
+                            setState(() => _dateFilter = null);
+                            await _load();
+                          },
+                          child: const Text('الكل'),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ],
           ),
         ),
@@ -359,14 +375,21 @@ class _InvoiceDetail extends StatelessWidget {
             Expanded(
               child: Text(
                 'فاتورة ${invoice['invoice_number'] ?? ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
                 ),
               ),
             ),
+          ],
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
             OutlinedButton(onPressed: onPrint, child: const Text('طباعة')),
-            const SizedBox(width: 8),
             OutlinedButton(onPressed: onReprint, child: const Text('إعادة')),
           ],
         ),
