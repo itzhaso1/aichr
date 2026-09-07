@@ -1186,18 +1186,7 @@ class _CartPanel extends ConsumerStatefulWidget {
 }
 
 class _CartPanelState extends ConsumerState<_CartPanel> {
-  List<Map<String, dynamic>> _tables = const [];
   final _notesController = TextEditingController();
-  var _metaLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Never kick off setState from build — schedule after first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _ensureMeta();
-    });
-  }
 
   @override
   void dispose() {
@@ -1218,29 +1207,11 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     });
   }
 
-  Future<void> _ensureMeta() async {
-    if (_metaLoaded) return;
-    _metaLoaded = true;
-    final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId == null || workspaceId <= 0) return;
-    try {
-      // Local SQLite only — never hit the network from the cart panel.
-      final local = await ref
-          .read(tablesRepositoryProvider)
-          .listTables(workspaceId);
-      if (!mounted) return;
-      if (local.isNotEmpty) {
-        setState(() => _tables = local);
-      }
-    } catch (_) {
-      // Offline — takeaway still works without tables list.
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartControllerProvider);
     final notifier = ref.read(cartControllerProvider.notifier);
+    final tables = ref.watch(localTablesProvider).valueOrNull ?? const [];
     if (cart.notes != null &&
         cart.notes!.isNotEmpty &&
         _notesController.text != cart.notes) {
@@ -1283,7 +1254,7 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                 if (cart.channel == OrderChannel.table) ...[
                   const SizedBox(height: 8),
                   _TablePickerField(
-                    tables: _tables,
+                    tables: tables,
                     selectedId: cart.tableId,
                     onSelected: (id, {String? localId}) =>
                         notifier.setTable(id, tableLocalId: localId),

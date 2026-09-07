@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hasim_cashier/core/local_db/app_database.dart';
 import 'package:hasim_cashier/core/local_db/local_ids.dart';
 import 'package:hasim_cashier/core/local_db/workspace_scope.dart';
+import 'package:hasim_cashier/core/pos/application/catalog_admin_service.dart';
+import 'package:hasim_cashier/core/pos/application/local_auth_service.dart';
 import 'package:hasim_cashier/core/repositories/catalog_repository.dart';
 import 'package:hasim_cashier/core/repositories/sync_queue_repository.dart';
 import 'package:hasim_cashier/core/repositories/tables_repository.dart';
@@ -341,5 +343,50 @@ void main() {
     expect(detail!['orders'], isA<List>());
     expect((detail['orders'] as List), hasLength(1));
     expect(detail['total'], 40);
+  });
+
+  test('createTable is listed with numeric id so the board can show it', () async {
+    final admin = CatalogAdminService(db);
+    final localId = await admin.createTable(
+      workspaceId: 1,
+      name: 'VIP 1',
+      permissions: LocalAuthService.adminPermissions,
+    );
+    final repo = TablesRepository(db, SyncQueueRepository(db));
+    final listed = await repo.listTables(1);
+    expect(listed.single['name'], 'VIP 1');
+    expect(listed.single['local_id'], localId);
+    expect(asInt(listed.single['id']), isA<int>());
+    expect(listed.single['status'], 'available');
+
+    final opened = await repo.openSessionLocal(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: asInt(listed.single['id'])!,
+    );
+    expect(opened['status'], 'occupied');
+  });
+
+  test('uuid-only tables get a server id and remain visible', () async {
+    await db.into(db.localTables).insert(
+          LocalTablesCompanion.insert(
+            localId: 'uuid-table-old',
+            workspaceId: 4,
+            name: 'قديمة',
+            status: const Value('available'),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    final repo = TablesRepository(db, SyncQueueRepository(db));
+    final listed = await repo.listTables(4);
+    expect(listed.single['name'], 'قديمة');
+    expect(asInt(listed.single['id']), isA<int>());
+    await repo.openSessionLocal(
+      workspaceId: 4,
+      deviceId: 'dev-1',
+      tableServerId: asInt(listed.single['id'])!,
+    );
+    final again = await repo.listTables(4);
+    expect(again.single['status'], 'occupied');
   });
 }

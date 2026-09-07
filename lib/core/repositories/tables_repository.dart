@@ -28,6 +28,7 @@ class TablesRepository {
 
   Future<List<Map<String, dynamic>>> listTables(int workspaceId) async {
     if (workspaceId <= 0) return const [];
+    await _backfillMissingServerIds(workspaceId);
     final rows = await (_db.select(_db.localTables)
           ..where((t) => t.workspaceId.equals(workspaceId))
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
@@ -39,14 +40,7 @@ class TablesRepository {
     int workspaceId,
     int tableServerId,
   ) async {
-    if (workspaceId <= 0 || tableServerId <= 0) return null;
-    final row = await (_db.select(_db.localTables)
-          ..where(
-            (t) =>
-                t.workspaceId.equals(workspaceId) &
-                t.serverId.equals(tableServerId),
-          ))
-        .getSingleOrNull();
+    final row = await _findTable(workspaceId, serverId: tableServerId);
     if (row == null) return null;
     return _rowToDetailMap(row);
   }
@@ -54,6 +48,82 @@ class TablesRepository {
   /// Workspace-scoped local PK so the same server table id can exist in A and B.
   static String tableLocalId(int workspaceId, int serverId) =>
       LocalIds.table(workspaceId, serverId);
+
+  Future<LocalTable?> _findTable(
+    int workspaceId, {
+    String? localId,
+    int? serverId,
+  }) async {
+    if (workspaceId <= 0) return null;
+    final lid = localId?.trim();
+    if (lid != null && lid.isNotEmpty) {
+      final byLocal = await (_db.select(_db.localTables)
+            ..where(
+              (t) =>
+                  t.localId.equals(lid) & t.workspaceId.equals(workspaceId),
+            ))
+          .getSingleOrNull();
+      if (byLocal != null) return byLocal;
+    }
+    if (serverId != null && serverId > 0) {
+      final byServer = await (_db.select(_db.localTables)
+            ..where(
+              (t) =>
+                  t.workspaceId.equals(workspaceId) &
+                  t.serverId.equals(serverId),
+            ))
+          .getSingleOrNull();
+      if (byServer != null) return byServer;
+      return (_db.select(_db.localTables)
+            ..where(
+              (t) =>
+                  t.localId.equals(tableLocalId(workspaceId, serverId)) &
+                  t.workspaceId.equals(workspaceId),
+            ))
+          .getSingleOrNull();
+    }
+    return null;
+  }
+
+  Future<LocalTable> _requireTableByServerId(
+    int workspaceId,
+    int tableServerId,
+  ) async {
+    final table = await _findTable(workspaceId, serverId: tableServerId);
+    if (table == null) {
+      throw StateError('الطاولة غير متاحة محليًا.');
+    }
+    return table;
+  }
+
+  Future<void> _backfillMissingServerIds(int workspaceId) async {
+    final rows = await (_db.select(_db.localTables)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .get();
+    final missing = [for (final row in rows) if (row.serverId == null) row];
+    if (missing.isEmpty) return;
+    var next = 0;
+    for (final row in rows) {
+      final sid = row.serverId;
+      if (sid != null && sid > next) next = sid;
+    }
+    for (final row in missing) {
+      next += 1;
+      final payload = _safeMap(row.payloadJson);
+      payload['id'] = next;
+      payload['name'] = row.name;
+      payload['status'] = row.status;
+      await (_db.update(_db.localTables)
+            ..where((t) => t.localId.equals(row.localId)))
+          .write(
+        LocalTablesCompanion(
+          serverId: Value(next),
+          payloadJson: Value(jsonEncode(payload)),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    }
+  }
 
   Future<void> replaceBoard(
     int workspaceId,
@@ -185,14 +255,11 @@ class TablesRepository {
     if (workspaceId <= 0 || tableServerId <= 0) {
       throw ArgumentError('workspaceId and tableServerId required');
     }
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final existing = await (_db.select(_db.localTables)
-          ..where((t) =>
-              t.localId.equals(localId) & t.workspaceId.equals(workspaceId)))
-        .getSingleOrNull();
+    final existing = await _findTable(workspaceId, serverId: tableServerId);
     if (existing == null) {
-      throw StateError('الطاولة غير متاحة محليًا. أكمل Initial Sync أولًا.');
+      throw StateError('الطاولة غير متاحة محليًا.');
     }
+    final localId = existing.localId;
     final payload = _safeMap(existing.payloadJson);
     final existingClient = '${payload['session_client_id'] ?? ''}';
     if (existing.status == 'occupied' && existingClient.isNotEmpty) {
@@ -253,14 +320,8 @@ class TablesRepository {
     if (workspaceId <= 0 || tableServerId <= 0) {
       throw ArgumentError('workspaceId and tableServerId required');
     }
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final table = await (_db.select(_db.localTables)
-          ..where((t) =>
-              t.localId.equals(localId) & t.workspaceId.equals(workspaceId)))
-        .getSingleOrNull();
-    if (table == null) {
-      throw StateError('الطاولة غير متاحة محليًا.');
-    }
+    final table = await _requireTableByServerId(workspaceId, tableServerId);
+    final localId = table.localId;
     final payload = _safeMap(table.payloadJson);
     final sessionClientId = '${payload['session_client_id'] ?? _newId()}';
     final closeClientId = _newId();
@@ -420,8 +481,8 @@ class TablesRepository {
     required String deviceId,
     required int tableServerId,
   }) async {
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final table = await _requireTable(workspaceId, localId);
+    final table = await _requireTableByServerId(workspaceId, tableServerId);
+    final localId = table.localId;
     final payload = _safeMap(table.payloadJson);
     final sessionClientId = '${payload['session_client_id'] ?? _newId()}';
     final clientRef = _newId();
@@ -497,8 +558,8 @@ class TablesRepository {
     required int tableServerId,
     required String notes,
   }) async {
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final table = await _requireTable(workspaceId, localId);
+    final table = await _requireTableByServerId(workspaceId, tableServerId);
+    final localId = table.localId;
     final payload = _safeMap(table.payloadJson);
     final trimmed = notes.trim();
     final next = {...payload, 'notes': trimmed};
@@ -538,8 +599,8 @@ class TablesRepository {
     required double discountAmount,
   }) async {
     if (discountAmount < 0) throw ArgumentError('discountAmount');
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final table = await _requireTable(workspaceId, localId);
+    final table = await _requireTableByServerId(workspaceId, tableServerId);
+    final localId = table.localId;
     final payload = _safeMap(table.payloadJson);
     final subtotal = asDoubleOr(payload['subtotal']);
     final tax = asDoubleOr(payload['tax_amount']);
@@ -790,8 +851,8 @@ class TablesRepository {
     required List<Map<String, dynamic>> moveItems,
   }) async {
     if (moveItems.isEmpty) throw ArgumentError('moveItems required');
-    final localId = tableLocalId(workspaceId, tableServerId);
-    final table = await _requireTable(workspaceId, localId);
+    final table = await _requireTableByServerId(workspaceId, tableServerId);
+    final localId = table.localId;
     final payload = _safeMap(table.payloadJson);
     final clientRef = _newId();
     final newOrderId = _newId();
@@ -942,7 +1003,7 @@ class TablesRepository {
       }
       if (list.isNotEmpty) {
         await replaceBoard(workspaceId, list);
-        return listTables(workspaceId);
+        return await listTables(workspaceId);
       }
     } catch (_) {
       // Keep local SQLite as source of truth for UI.
@@ -984,7 +1045,7 @@ class TablesRepository {
     final payload = _safeMap(row.payloadJson);
     return {
       ...payload,
-      'id': row.serverId,
+      'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name,
       'status': row.status,
@@ -999,7 +1060,7 @@ class TablesRepository {
     final payload = _safeMap(row.payloadJson);
     return {
       ...payload,
-      'id': row.serverId,
+      'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name.isNotEmpty ? row.name : '${payload['name'] ?? ''}',
       'status': row.status,

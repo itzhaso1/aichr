@@ -45,6 +45,14 @@ final tablesRepositoryProvider = Provider<TablesRepository>((ref) {
   );
 });
 
+final localTablesProvider = FutureProvider<List<Map<String, dynamic>>>((
+  ref,
+) async {
+  final workspaceId = ref.watch(workspaceIdProvider);
+  if (workspaceId == null || workspaceId <= 0) return const [];
+  return ref.watch(tablesRepositoryProvider).listTables(workspaceId);
+});
+
 final syncQueueRepositoryProvider = Provider<SyncQueueRepository>((ref) {
   return SyncQueueRepository(ref.watch(appDatabaseProvider));
 });

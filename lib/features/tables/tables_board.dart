@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/cashier_api.dart';
+import '../../core/auth/auth_controller.dart';
 import '../../core/config/app_config.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/network/cashier_link.dart';
+import '../../core/permissions/cashier_permissions.dart';
+import '../../core/permissions/permissions_provider.dart';
+import '../../core/pos/application/pos_providers.dart';
+import '../../core/pos/pos_errors.dart';
 import '../../core/pos/pos_labels.dart';
 import '../../core/realtime/pos_event_source.dart';
 import '../../core/theme/hasim_colors.dart';
@@ -101,7 +106,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       _tables = next;
       _loading = false;
       _error = next.isEmpty
-          ? 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.'
+          ? (AppConfig.offlineOnly
+              ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
+              : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
           : null;
     });
   }
@@ -125,6 +132,64 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       }
     }
     return true;
+  }
+
+  Future<void> _addTable() async {
+    final workspaceId = ref.read(workspaceIdProvider);
+    if (workspaceId == null || workspaceId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد مساحة عمل محددة.')),
+      );
+      return;
+    }
+    final name = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('طاولة جديدة'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'اسم / رقم الطاولة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = name.text.trim();
+    name.dispose();
+    if (ok != true || trimmed.isEmpty) return;
+    try {
+      await ref.read(catalogAdminServiceProvider).createTable(
+            workspaceId: workspaceId,
+            name: trimmed,
+            permissions: CashierPermissions.resolve(
+              ref.read(cashierPermissionsProvider),
+              ref.read(authControllerProvider).valueOrNull?.permissions,
+            ),
+          );
+      ref.invalidate(localTablesProvider);
+      if (!mounted) return;
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تمت إضافة «$trimmed».')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is PosException ? e.messageAr : '$e';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر إضافة الطاولة: $message')),
+      );
+    }
   }
 
   @override
@@ -182,6 +247,26 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                 ),
               ),
               PosTap(
+                onTap: _addTable,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add, color: HasimColors.brand),
+                      SizedBox(width: 4),
+                      Text(
+                        'إضافة طاولة',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: HasimColors.brand,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              PosTap(
                 onTap: _load,
                 child: const Padding(
                   padding: EdgeInsets.all(8),
@@ -193,9 +278,14 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
         ),
         Expanded(
           child: _tables.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: HsEmpty(title: 'لا توجد طاولات بعد.'),
+              ? Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: HsEmpty(
+                    title: 'لا توجد طاولات بعد.',
+                    subtitle: 'أضف طاولة من هنا أو من الإعدادات ثم اضغط حفظ.',
+                    actionLabel: 'إضافة طاولة',
+                    onAction: _addTable,
+                  ),
                 )
               : RefreshIndicator(
                   onRefresh: _load,
@@ -223,7 +313,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     final total = asDoubleOr(table['total']);
     final orders = asIntOr(table['open_orders_count'] ?? table['orders_count']);
     final id = asInt(table['id']);
-    if (id == null) {
+    final localId = '${table['local_id'] ?? ''}'.trim();
+    if (id == null && localId.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -231,7 +322,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       color: Colors.white,
       borderRadius: BorderRadius.circular(HasimRadius.md),
       child: PosTap(
-        onTap: () => openTableWorkspace(ref, id),
+        onTap: id == null ? null : () => openTableWorkspace(ref, id),
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(HasimRadius.md),
