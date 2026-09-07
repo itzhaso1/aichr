@@ -128,6 +128,50 @@ class HsOutlineButton extends StatelessWidget {
   }
 }
 
+/// App-bar / header text action without Material [InkWell] / [MouseRegion].
+class HsTextAction extends StatelessWidget {
+  const HsTextAction({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.color = HasimColors.brand,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      label,
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w800,
+        color: color,
+      ),
+    );
+    return PosTap(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: icon == null
+            ? text
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 18, color: color),
+                  const SizedBox(width: 6),
+                  text,
+                ],
+              ),
+      ),
+    );
+  }
+}
+
 class HsEmpty extends StatelessWidget {
   const HsEmpty({
     super.key,

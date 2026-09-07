@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_controller.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/widgets/hasim_widgets.dart';
 import 'daily_reports_panel.dart';
 
 /// Isolated reports station — reachable from login under the kitchen entry.
@@ -12,7 +13,16 @@ class ReportsStationScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(authControllerProvider).valueOrNull;
+    // Select primitives only so auth loading/rebuilds do not recreate AppBar
+    // InkWell/MouseRegion annotations under a live Windows cursor.
+    final userName = ref.watch(
+      authControllerProvider.select((s) => s.valueOrNull?.userName),
+    );
+    final canUsePos = ref.watch(
+      authControllerProvider.select(
+        (s) => s.valueOrNull?.canUsePos == true,
+      ),
+    );
 
     return Scaffold(
       backgroundColor: HasimColors.page,
@@ -23,9 +33,9 @@ class ReportsStationScreen extends ConsumerWidget {
           children: [
             const Text('التقارير'),
             Text(
-              session == null || session.userName.isEmpty
+              userName == null || userName.isEmpty
                   ? 'محطة التقارير — ملخص المبيعات المحلية'
-                  : 'مرحباً ${session.userName}',
+                  : 'مرحباً $userName',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -35,24 +45,26 @@ class ReportsStationScreen extends ConsumerWidget {
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => context.go('/kitchen'),
-            child: const Text('المطبخ'),
+          HsTextAction(
+            label: 'المطبخ',
+            onTap: () => context.go('/kitchen'),
           ),
-          if (session?.canUsePos == true)
-            TextButton(
-              onPressed: () => context.go('/home'),
-              child: const Text('الكاشير'),
+          if (canUsePos)
+            HsTextAction(
+              label: 'الكاشير',
+              onTap: () => context.go('/home'),
             ),
-          TextButton.icon(
-            onPressed: () async {
+          HsTextAction(
+            label: 'خروج',
+            icon: Icons.logout,
+            color: HasimColors.ink,
+            onTap: () async {
+              final session = ref.read(authControllerProvider).valueOrNull;
               if (session != null) {
                 await ref.read(authControllerProvider.notifier).logout();
               }
               if (context.mounted) context.go('/login');
             },
-            icon: const Icon(Icons.logout, size: 18),
-            label: const Text('خروج'),
           ),
         ],
       ),

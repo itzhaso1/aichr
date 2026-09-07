@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/auth/auth_controller.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/widgets/hasim_widgets.dart';
 import 'kitchen_board.dart';
 
 /// Isolated chef station — reachable from login without cashier credentials.
@@ -12,8 +13,18 @@ class KitchenStationScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(authControllerProvider).valueOrNull;
-    final chefName = session?.isKitchenSession == true ? session!.userName : null;
+    final chefName = ref.watch(
+      authControllerProvider.select((s) {
+        final session = s.valueOrNull;
+        if (session == null || !session.isKitchenSession) return null;
+        return session.userName;
+      }),
+    );
+    final canUsePos = ref.watch(
+      authControllerProvider.select(
+        (s) => s.valueOrNull?.canUsePos == true,
+      ),
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -36,24 +47,26 @@ class KitchenStationScreen extends ConsumerWidget {
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () => context.go('/reports'),
-            child: const Text('التقارير'),
+          HsTextAction(
+            label: 'التقارير',
+            onTap: () => context.go('/reports'),
           ),
-          if (session?.canUsePos == true)
-            TextButton(
-              onPressed: () => context.go('/home'),
-              child: const Text('الكاشير'),
+          if (canUsePos)
+            HsTextAction(
+              label: 'الكاشير',
+              onTap: () => context.go('/home'),
             ),
-          TextButton.icon(
-            onPressed: () async {
+          HsTextAction(
+            label: 'خروج',
+            icon: Icons.logout,
+            color: HasimColors.ink,
+            onTap: () async {
+              final session = ref.read(authControllerProvider).valueOrNull;
               if (session != null) {
                 await ref.read(authControllerProvider.notifier).logout();
               }
               if (context.mounted) context.go('/login');
             },
-            icon: const Icon(Icons.logout, size: 18),
-            label: const Text('خروج'),
           ),
         ],
       ),

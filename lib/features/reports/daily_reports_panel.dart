@@ -1,17 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../../core/api/cashier_api.dart';
-import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/pos/application/pos_providers.dart';
-import '../../core/permissions/cashier_permissions.dart';
-import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/theme/hasim_radius.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 class DailyReportsPanel extends ConsumerStatefulWidget {
   const DailyReportsPanel({super.key, this.active = true});
@@ -29,41 +29,88 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   String? _error;
   var _forbidden = false;
   late DateTime _date;
+  Future<void>? _inflight;
+  var _pendingReload = false;
+  var _reloadScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _date = DateTime.now();
     // Defer to after first frame so providers are ready (avoids blank first paint).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
-    });
+    _scheduleReload();
   }
 
   @override
   void didUpdateWidget(covariant DailyReportsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.active && !oldWidget.active) {
-      _load();
+      _scheduleReload();
     }
   }
 
   String get _q => DateFormat('yyyy-MM-dd').format(_date);
 
+  void _scheduleReload() {
+    if (_reloadScheduled) return;
+    _reloadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reloadScheduled = false;
+      if (mounted) unawaited(_load());
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (!mounted || picked == null) return;
+    setState(() => _date = picked);
+    await _load();
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _forbidden = false;
-    });
+    if (_inflight != null) {
+      _pendingReload = true;
+      return;
+    }
+    final run = _runLoad();
+    _inflight = run;
+    try {
+      await run;
+    } finally {
+      _inflight = null;
+      if (_pendingReload && mounted) {
+        _pendingReload = false;
+        await _load();
+      }
+    }
+  }
+
+  Future<void> _runLoad() async {
+    if (!mounted) return;
+    final showSpinner = _data == null;
+    if (showSpinner || _error != null || _forbidden) {
+      setState(() {
+        if (showSpinner) _loading = true;
+        _error = null;
+        _forbidden = false;
+      });
+    }
 
     final workspaceId = ref.read(workspaceIdProvider);
     var resolvedWorkspace = workspaceId;
     if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
       final store = await ref.read(localAuthServiceProvider).anyStore();
       resolvedWorkspace = store?.workspaceId;
-      if (resolvedWorkspace != null && mounted) {
+      if (resolvedWorkspace != null &&
+          resolvedWorkspace > 0 &&
+          mounted &&
+          ref.read(workspaceIdProvider) != resolvedWorkspace) {
         ref.read(workspaceIdProvider.notifier).state = resolvedWorkspace;
       }
     }
@@ -129,28 +176,11 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   Widget build(BuildContext context) {
     ref.listen<int?>(workspaceIdProvider, (prev, next) {
       if (next != prev && next != null && next > 0) {
-        _load();
+        _scheduleReload();
       }
     });
     ref.listen<int>(invoicesRevisionProvider, (prev, next) {
-      if (prev != next) _load();
-    });
-    ref.listen<Map<String, dynamic>>(cashierPermissionsProvider, (prev, next) {
-      final wasDenied = !CashierPermissions.canViewReports(
-        CashierPermissions.resolve(
-          prev,
-          ref.read(authControllerProvider).valueOrNull?.permissions,
-        ),
-      );
-      final nowAllowed = CashierPermissions.canViewReports(
-        CashierPermissions.resolve(
-          next,
-          ref.read(authControllerProvider).valueOrNull?.permissions,
-        ),
-      );
-      if (wasDenied && nowAllowed && _data == null && !_loading) {
-        _load();
-      }
+      if (prev != next) _scheduleReload();
     });
 
     Widget body;
@@ -262,23 +292,30 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                 ),
               ),
               const SizedBox(width: 8),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: OutlinedButton(
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _date,
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime.now(),
-                      );
-                      if (picked == null) return;
-                      setState(() => _date = picked);
-                      await _load();
-                    },
-                    child: Text(_q),
+              PosTap(
+                onTap: _pickDate,
+                child: ConstrainedBox(
+                  key: const ValueKey('reports-date-chip'),
+                  constraints: const BoxConstraints(minWidth: 88, minHeight: 36),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: HasimColors.surface,
+                      borderRadius: BorderRadius.circular(HasimRadius.sm),
+                      border: Border.all(color: HasimColors.border),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        _q,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: HasimColors.ink,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -531,7 +568,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             ? 2
             : 1;
         final width = cols == 1 ? maxW : (maxW - (8 * (cols - 1))) / cols;
-        final cardW = width.isFinite && width > 0 ? width : maxW;
+        final cardW = width.isFinite && width >= 8 ? width : maxW;
         return Wrap(
           spacing: 8,
           runSpacing: 8,

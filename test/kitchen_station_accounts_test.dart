@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart' hide isNull;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +18,7 @@ import 'package:hasim_cashier/core/repositories/local_finance_repository.dart';
 import 'package:hasim_cashier/core/repositories/orders_repository.dart';
 import 'package:hasim_cashier/core/repositories/sync_queue_repository.dart';
 import 'package:hasim_cashier/core/permissions/permissions_provider.dart';
+import 'package:hasim_cashier/core/widgets/pos_tap.dart';
 import 'package:hasim_cashier/features/auth/login_screen.dart';
 import 'package:hasim_cashier/features/kitchen/kitchen_board.dart';
 import 'package:hasim_cashier/features/orders/orders_list.dart';
@@ -667,4 +669,104 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
   });
+
+  testWidgets(
+    'reports station hover during load does not trip mouse_tracker',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final errors = <Object>[];
+      final previous = FlutterError.onError;
+      FlutterError.onError = (details) {
+        errors.add(details.exception);
+        previous?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = previous);
+
+      bool hasHitTestStorm() => errors.any(
+            (e) =>
+                '$e'.contains('no size') ||
+                '$e'.contains('_debugDuringDeviceUpdate') ||
+                '$e'.contains('PointerAddedEvent') ||
+                '$e'.contains('Null check operator'),
+          );
+
+      await seedStore();
+      final now = DateTime.now();
+      await db.into(db.localInvoices).insert(
+            LocalInvoicesCompanion.insert(
+              localId: 'inv-hover',
+              workspaceId: ws,
+              deviceId: 'dev-1',
+              invoiceNumber: const Value('INV-HOVER-1'),
+              localInvoiceNumber: const Value('INV-HOVER-1'),
+              totalAmount: const Value(900),
+              createdAt: now,
+            ),
+          );
+
+      final container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) => db),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            locale: Locale('ar'),
+            supportedLocales: [Locale('ar'), Locale('en')],
+            localizationsDelegates: [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            home: ReportsStationScreen(),
+          ),
+        ),
+      );
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: const Offset(24, 24));
+      addTearDown(gesture.removePointer);
+      await tester.pump();
+
+      await gesture.moveTo(const Offset(640, 28));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await gesture.moveTo(const Offset(720, 28));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('غير مصرح بعرض التقارير'), findsNothing);
+      expect(find.text('التقارير اليومية'), findsOneWidget);
+      expect(find.byType(OutlinedButton), findsNothing);
+      expect(find.byType(TextButton), findsNothing);
+      expect(find.byType(PosTap), findsWidgets);
+
+      await gesture.moveTo(tester.getCenter(find.text('المطبخ')));
+      await tester.pump();
+      await gesture.moveTo(
+        tester.getCenter(find.byKey(const ValueKey('reports-date-chip'))),
+      );
+      await tester.pump();
+      container.read(invoicesRevisionProvider.notifier).state++;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await gesture.moveTo(tester.getCenter(find.text('إجمالي المبيعات')));
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(find.text('خروج')));
+      await tester.pump();
+
+      expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 50));
+    },
+  );
 }
