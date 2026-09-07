@@ -5,10 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hasim_cashier/core/local_db/app_database.dart';
 import 'package:hasim_cashier/core/local_db/local_ids.dart';
 import 'package:hasim_cashier/core/local_db/workspace_scope.dart';
+import 'package:hasim_cashier/core/pos/application/catalog_admin_service.dart';
+import 'package:hasim_cashier/core/pos/application/local_auth_service.dart';
 import 'package:hasim_cashier/core/repositories/catalog_repository.dart';
 import 'package:hasim_cashier/core/repositories/sync_queue_repository.dart';
 import 'package:hasim_cashier/core/repositories/tables_repository.dart';
 import 'package:hasim_cashier/core/sync/sync_engine_v2.dart';
+import 'package:hasim_cashier/core/util/json_numbers.dart';
 
 void main() {
   late AppDatabase db;
@@ -50,6 +53,58 @@ void main() {
     expect(a.single['name'], 'شاي أ');
     expect(b.single['name'], 'قهوة ب');
     expect(await repo.products(3), isEmpty);
+  });
+
+  test('category chips match products by UUID local_id not numeric id', () async {
+    final now = DateTime.now();
+    await db.into(db.localCategories).insert(
+          LocalCategoriesCompanion.insert(
+            localId: 'cat-uuid-drinks',
+            workspaceId: 1,
+            name: 'مشروبات',
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localCategories).insert(
+          LocalCategoriesCompanion.insert(
+            localId: 'cat-uuid-food',
+            workspaceId: 1,
+            name: 'أكل',
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-tea',
+            workspaceId: 1,
+            name: 'شاي',
+            categoryLocalId: const Value('cat-uuid-drinks'),
+            price: const Value(500),
+            updatedAt: now,
+          ),
+        );
+    await db.into(db.localProducts).insert(
+          LocalProductsCompanion.insert(
+            localId: 'prod-burger',
+            workspaceId: 1,
+            name: 'برجر',
+            categoryLocalId: const Value('cat-uuid-food'),
+            price: const Value(1500),
+            updatedAt: now,
+          ),
+        );
+
+    final repo = CatalogRepository(db);
+    final cats = await repo.categories(1);
+    final products = await repo.products(1);
+    final drinks = cats.firstWhere((c) => c['name'] == 'مشروبات');
+    final key = entityKey(drinks);
+    expect(key, 'cat-uuid-drinks');
+    final matched = products
+        .where((p) => productBelongsToCategory(p, key))
+        .map((p) => p['name'])
+        .toList();
+    expect(matched, ['شاي']);
   });
 
   test('offline POS ready only after initial sync flag or local products',
@@ -288,5 +343,50 @@ void main() {
     expect(detail!['orders'], isA<List>());
     expect((detail['orders'] as List), hasLength(1));
     expect(detail['total'], 40);
+  });
+
+  test('createTable is listed with numeric id so the board can show it', () async {
+    final admin = CatalogAdminService(db);
+    final localId = await admin.createTable(
+      workspaceId: 1,
+      name: 'VIP 1',
+      permissions: LocalAuthService.adminPermissions,
+    );
+    final repo = TablesRepository(db, SyncQueueRepository(db));
+    final listed = await repo.listTables(1);
+    expect(listed.single['name'], 'VIP 1');
+    expect(listed.single['local_id'], localId);
+    expect(asInt(listed.single['id']), isA<int>());
+    expect(listed.single['status'], 'available');
+
+    final opened = await repo.openSessionLocal(
+      workspaceId: 1,
+      deviceId: 'dev-1',
+      tableServerId: asInt(listed.single['id'])!,
+    );
+    expect(opened['status'], 'occupied');
+  });
+
+  test('uuid-only tables get a server id and remain visible', () async {
+    await db.into(db.localTables).insert(
+          LocalTablesCompanion.insert(
+            localId: 'uuid-table-old',
+            workspaceId: 4,
+            name: 'قديمة',
+            status: const Value('available'),
+            updatedAt: DateTime.now(),
+          ),
+        );
+    final repo = TablesRepository(db, SyncQueueRepository(db));
+    final listed = await repo.listTables(4);
+    expect(listed.single['name'], 'قديمة');
+    expect(asInt(listed.single['id']), isA<int>());
+    await repo.openSessionLocal(
+      workspaceId: 4,
+      deviceId: 'dev-1',
+      tableServerId: asInt(listed.single['id'])!,
+    );
+    final again = await repo.listTables(4);
+    expect(again.single['status'], 'occupied');
   });
 }

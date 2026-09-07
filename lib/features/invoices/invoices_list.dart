@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -13,7 +15,9 @@ import '../../core/widgets/pos_tap.dart';
 
 /// Closed cashier invoices — local SQLite first, remote enrichment optional.
 class InvoicesList extends ConsumerStatefulWidget {
-  const InvoicesList({super.key});
+  const InvoicesList({super.key, this.active = true});
+
+  final bool active;
 
   @override
   ConsumerState<InvoicesList> createState() => _InvoicesListState();
@@ -23,39 +27,70 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   List<Map<String, dynamic>> _invoices = const [];
   var _loading = true;
   String? _error;
-  late DateTime _date;
+  DateTime? _dateFilter;
   Map<String, dynamic>? _selected;
   String? _workspaceName;
+  StreamSubscription? _watchSub;
 
   @override
   void initState() {
     super.initState();
-    _date = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (!mounted) return;
+      _subscribe();
+      _load();
     });
   }
 
-  String get _dateQuery => DateFormat('yyyy-MM-dd').format(_date);
+  @override
+  void dispose() {
+    _watchSub?.cancel();
+    super.dispose();
+  }
 
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _selected = null;
+  void _subscribe() {
+    _watchSub?.cancel();
+    _watchSub = ref
+        .read(localFinanceRepositoryProvider)
+        .watchInvoices()
+        .listen((_) {
+      if (mounted) _load(silent: true);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant InvoicesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _load();
+    }
+  }
+
+  String get _dateQuery => _dateFilter == null
+      ? 'كل الفواتير'
+      : DateFormat('yyyy-MM-dd').format(_dateFilter!);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!mounted) return;
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _selected = null;
+      });
+    }
     final workspaceId = ref.read(workspaceIdProvider);
     final finance = ref.read(localFinanceRepositoryProvider);
     final session = ref.read(authControllerProvider).valueOrNull;
 
     try {
-      final local = workspaceId != null && workspaceId > 0
-          ? await finance.listInvoices(
-              workspaceId: workspaceId,
-              onDate: _date,
-            )
-          : const <Map<String, dynamic>>[];
+      final local = await finance
+          .listInvoices(
+            workspaceId: workspaceId,
+            onDate: _dateFilter,
+            fallbackAllWorkspaces: true,
+          )
+          .timeout(const Duration(seconds: 5));
       if (!mounted) return;
       setState(() {
         _invoices = local;
@@ -76,24 +111,25 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: _dateFilter ?? DateTime.now(),
       firstDate: DateTime(2020),
       lastDate: DateTime.now().add(const Duration(days: 1)),
     );
     if (picked == null) return;
-    setState(() => _date = picked);
+    setState(() => _dateFilter = picked);
     await _load();
   }
 
   Future<void> _openInvoice(Map<String, dynamic> invoice) async {
     try {
       final workspaceId = ref.read(workspaceIdProvider);
-      final localId = '${invoice['local_id'] ?? ''}';
+      final localId = '${invoice['local_id'] ?? ''}'.trim();
       Map<String, dynamic>? local;
-      if (workspaceId != null && localId.isNotEmpty) {
-        local = await ref
-            .read(localFinanceRepositoryProvider)
-            .getInvoice(workspaceId: workspaceId, localId: localId);
+      if (localId.isNotEmpty) {
+        local = await ref.read(localFinanceRepositoryProvider).getInvoice(
+              workspaceId: workspaceId,
+              localId: localId,
+            );
       }
       if (!mounted) return;
       final draft = Map<String, dynamic>.from(local ?? invoice);
@@ -117,8 +153,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            reprint
-                ? (result.success ? 'تمت إعادة الطباعة.' : result.message)
+            result.printed
+                ? (reprint ? 'تمت إعادة الطباعة.' : 'تمت الطباعة.')
                 : result.message,
           ),
         ),
@@ -133,76 +169,84 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'فواتير الكاشير المغلقة',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'فواتير محلية من هذا الجهاز.',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: HasimColors.muted,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.calendar_today, size: 16),
-                label: Text(_dateQuery),
-              ),
-            ],
-          ),
+    ref.listen<int?>(workspaceIdProvider, (prev, next) {
+      if (next != prev && next != null && next > 0) {
+        _load();
+      }
+    });
+    ref.listen<int>(invoicesRevisionProvider, (prev, next) {
+      if (prev != next) _load(silent: true);
+    });
+    try {
+      return _buildBody();
+    } catch (e) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: HsEmpty(
+          title: 'تعذر عرض الفواتير',
+          subtitle: '$e',
+          actionLabel: 'إعادة المحاولة',
+          onAction: _load,
         ),
-        Expanded(
-          child: _loading && _invoices.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null && _invoices.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: HsEmpty(
-                    title: 'تعذر تحميل الفواتير',
-                    subtitle: _error,
-                    actionLabel: 'إعادة المحاولة',
-                    onAction: _load,
+      );
+    }
+  }
+
+  Widget _buildBody() {
+    if (_selected != null) {
+      return _InvoiceDetail(
+        invoice: _selected!,
+        onBack: () => setState(() => _selected = null),
+        onPrint: () => _printSelected(reprint: false),
+        onReprint: () => _printSelected(reprint: true),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bounded = constraints.hasBoundedHeight &&
+            constraints.maxHeight.isFinite &&
+            constraints.maxHeight > 0;
+        final list = RefreshIndicator(
+          onRefresh: _load,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(child: _header()),
+              if (_loading && _invoices.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_error != null && _invoices.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: HsEmpty(
+                      title: 'تعذر تحميل الفواتير',
+                      subtitle: _error,
+                      actionLabel: 'إعادة المحاولة',
+                      onAction: _load,
+                    ),
                   ),
                 )
-              : _invoices.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: HsEmpty(
-                    title: 'لا توجد فواتير لهذا التاريخ.',
-                    subtitle:
-                        'الفواتير المحلية تظهر هنا بعد إغلاق الطاولة أو طلب خارجي.',
+              else if (_invoices.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: HsEmpty(
+                      title: 'لا توجد فواتير بعد.',
+                      subtitle:
+                          'بعد الدفع أو إغلاق الطاولة تظهر الفاتورة هنا تلقائياً. اضغط عليها لفتحها. لا يوجد خيار فتح في الإعدادات.',
+                    ),
                   ),
                 )
-              : _selected != null
-              ? _InvoiceDetail(
-                  invoice: _selected!,
-                  onBack: () => setState(() => _selected = null),
-                  onPrint: () => _printSelected(reprint: false),
-                  onReprint: () => _printSelected(reprint: true),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(12),
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  sliver: SliverList.separated(
                     itemCount: _invoices.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
@@ -221,6 +265,8 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                     children: [
                                       Text(
                                         '${inv['invoice_number'] ?? inv['local_id'] ?? '—'}',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w800,
                                         ),
@@ -229,7 +275,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                       Text(
                                         inv['table'] != null
                                             ? 'طاولة: ${nestedName(inv['table'])}'
-                                            : 'فاتورة محلية',
+                                            : 'فاتورة مكتملة · اضغط للعرض',
                                         style: const TextStyle(
                                           fontSize: 12,
                                           color: HasimColors.muted,
@@ -238,6 +284,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                                     ],
                                   ),
                                 ),
+                                const SizedBox(width: 8),
                                 Text(
                                   asDoubleOr(
                                     inv['total_amount'],
@@ -254,8 +301,70 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                     },
                   ),
                 ),
-        ),
-      ],
+            ],
+          ),
+        );
+        if (!bounded) {
+          return SizedBox(
+            height: MediaQuery.sizeOf(context).height,
+            width: constraints.hasBoundedWidth && constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.sizeOf(context).width,
+            child: list,
+          );
+        }
+        return list;
+      },
+    );
+  }
+
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'فواتير الكاشير',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'هذه فواتير مكتملة (مدفوعة). اضغط على الفاتورة لفتحها وطباعتها — ليس من الإعدادات.',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: HasimColors.muted,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _pickDate,
+                icon: const Icon(Icons.calendar_today, size: 16),
+                label: Text(_dateQuery),
+              ),
+              if (_dateFilter != null)
+                TextButton(
+                  onPressed: () async {
+                    setState(() => _dateFilter = null);
+                    await _load();
+                  },
+                  child: const Text('الكل'),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -290,14 +399,21 @@ class _InvoiceDetail extends StatelessWidget {
             Expanded(
               child: Text(
                 'فاتورة ${invoice['invoice_number'] ?? ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
                 ),
               ),
             ),
+          ],
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
             OutlinedButton(onPressed: onPrint, child: const Text('طباعة')),
-            const SizedBox(width: 8),
             OutlinedButton(onPressed: onReprint, child: const Text('إعادة')),
           ],
         ),

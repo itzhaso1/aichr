@@ -12,33 +12,91 @@ class LocalFinanceRepository {
 
   final AppDatabase _db;
 
+  Future<List<LocalInvoice>> _queryRows({int? workspaceId}) {
+    final query = _db.select(_db.localInvoices)
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (workspaceId != null && workspaceId > 0) {
+      query.where((t) => t.workspaceId.equals(workspaceId));
+    }
+    return query.get();
+  }
+
   Future<List<Map<String, dynamic>>> listInvoices({
-    required int workspaceId,
+    int? workspaceId,
     DateTime? onDate,
+    bool fallbackAllWorkspaces = false,
   }) async {
-    if (workspaceId <= 0) return const [];
-    final rows = await (_db.select(_db.localInvoices)
-          ..where((t) => t.workspaceId.equals(workspaceId))
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-        .get();
+    var rows = List<LocalInvoice>.from(
+      await _queryRows(workspaceId: workspaceId),
+    );
+    if (fallbackAllWorkspaces) {
+      final all = await _queryRows();
+      if (all.length > rows.length) {
+        final seen = {for (final row in rows) row.localId};
+        for (final row in all) {
+          if (seen.add(row.localId)) rows.add(row);
+        }
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      }
+    }
+    if (onDate != null) {
+      final day = [
+        for (final row in rows)
+          if (_sameDay(row.createdAt, onDate)) row,
+      ];
+      if (day.isNotEmpty) {
+        return _mapsFor(day);
+      }
+      if (!fallbackAllWorkspaces) return const [];
+    }
+    return _mapsFor(rows);
+  }
+
+  List<Map<String, dynamic>> _mapsFor(List<LocalInvoice> rows) {
     final out = <Map<String, dynamic>>[];
     for (final row in rows) {
-      if (onDate != null && !_sameDay(row.createdAt, onDate)) continue;
-      out.add(_invoiceToMap(row));
+      try {
+        out.add(_invoiceToMap(row));
+      } catch (_) {
+        out.add({
+          'id': row.localId,
+          'local_id': row.localId,
+          'invoice_number':
+              row.invoiceNumber ?? row.localInvoiceNumber ?? row.localId,
+          'total_amount': Money.fromCents(row.totalAmount),
+          'created_at': row.createdAt.toIso8601String(),
+          'closed_at': row.createdAt.toIso8601String(),
+        });
+      }
     }
     return out;
   }
 
+  Stream<List<LocalInvoice>> watchInvoices({int? workspaceId}) {
+    final query = _db.select(_db.localInvoices)
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (workspaceId != null && workspaceId > 0) {
+      query.where((t) => t.workspaceId.equals(workspaceId));
+    }
+    return query.watch();
+  }
+
   Future<Map<String, dynamic>?> getInvoice({
-    required int workspaceId,
+    int? workspaceId,
     required String localId,
   }) async {
-    final row = await (_db.select(_db.localInvoices)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) & t.localId.equals(localId)))
+    if (workspaceId != null && workspaceId > 0) {
+      final row = await (_db.select(_db.localInvoices)
+            ..where((t) =>
+                t.workspaceId.equals(workspaceId) & t.localId.equals(localId)))
+          .getSingleOrNull();
+      if (row != null) return _invoiceToMap(row);
+    }
+    final any = await (_db.select(_db.localInvoices)
+          ..where((t) => t.localId.equals(localId)))
         .getSingleOrNull();
-    if (row == null) return null;
-    return _invoiceToMap(row);
+    if (any == null) return null;
+    return _invoiceToMap(any);
   }
 
   Future<Map<String, dynamic>?> getInvoiceByServerId({
@@ -58,7 +116,32 @@ class LocalFinanceRepository {
     required int workspaceId,
     required DateTime date,
   }) async {
-    final invoices = await listInvoices(workspaceId: workspaceId, onDate: date);
+    final invoices = await listInvoices(
+      workspaceId: workspaceId,
+      onDate: date,
+    );
+    if (invoices.isEmpty) {
+      final allDay = await listInvoices(onDate: date);
+      if (allDay.isNotEmpty) {
+        return _reportFromInvoices(
+          workspaceId: workspaceId,
+          date: date,
+          invoices: allDay,
+        );
+      }
+    }
+    return _reportFromInvoices(
+      workspaceId: workspaceId,
+      date: date,
+      invoices: invoices,
+    );
+  }
+
+  Future<Map<String, dynamic>> _reportFromInvoices({
+    required int workspaceId,
+    required DateTime date,
+    required List<Map<String, dynamic>> invoices,
+  }) async {
     final orders = await (_db.select(_db.localOrders)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .get();
@@ -226,10 +309,26 @@ class LocalFinanceRepository {
           payload['invoice_number']?.toString() ??
           row.localId,
       'order_local_id': row.orderLocalId ?? payload['order_local_id'],
-      'subtotal': Money.fromCents(row.subtotal),
-      'discount_amount': Money.fromCents(row.discountAmount),
-      'tax_amount': Money.fromCents(row.taxAmount),
-      'total_amount': Money.fromCents(row.totalAmount),
+      'subtotal': Money.fromCents(
+        row.subtotal > 0
+            ? row.subtotal
+            : Money.toCents(payload['subtotal']),
+      ),
+      'discount_amount': Money.fromCents(
+        row.discountAmount > 0
+            ? row.discountAmount
+            : Money.toCents(payload['discount_amount']),
+      ),
+      'tax_amount': Money.fromCents(
+        row.taxAmount > 0
+            ? row.taxAmount
+            : Money.toCents(payload['tax_amount']),
+      ),
+      'total_amount': Money.fromCents(
+        row.totalAmount > 0
+            ? row.totalAmount
+            : Money.toCents(payload['total_amount'] ?? payload['total']),
+      ),
       'payment_method': payload['payment_method']?.toString(),
       'closed_at':
           payload['closed_at']?.toString() ?? row.createdAt.toIso8601String(),
@@ -246,7 +345,12 @@ class LocalFinanceRepository {
   bool _sameDay(DateTime a, DateTime b) {
     final la = a.toLocal();
     final lb = b.toLocal();
-    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+    if (la.year == lb.year && la.month == lb.month && la.day == lb.day) {
+      return true;
+    }
+    final ua = a.toUtc();
+    final ub = b.toUtc();
+    return ua.year == ub.year && ua.month == ub.month && ua.day == ub.day;
   }
 
   Map<String, dynamic> _safeMap(String raw) {

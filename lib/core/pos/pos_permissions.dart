@@ -8,6 +8,7 @@ class PosPermissions {
   static const discount = 'orders.discount';
   static const refund = 'orders.refund';
   static const catalog = 'menu.manage';
+  static const tables = 'tables.manage';
   static const shiftOpen = 'shifts.open';
   static const shiftClose = 'shifts.close';
   static const shiftManage = 'shifts.manage';
@@ -32,6 +33,11 @@ class PosPermissions {
     }
     if (key == catalog) {
       return _truthy(permissions['workspace.manage']);
+    }
+    if (key == tables) {
+      return _truthy(permissions['menu.manage']) ||
+          _truthy(permissions['workspace.manage']) ||
+          _truthy(permissions['pos.manage']);
     }
     if (key == shiftOpen || key == shiftClose) {
       return _truthy(permissions[shiftManage]) ||

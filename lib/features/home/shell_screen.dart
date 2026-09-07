@@ -24,7 +24,6 @@ import '../../core/widgets/hasim_widgets.dart';
 import '../../core/widgets/pos_tap.dart';
 import '../admin/admin_placeholders.dart';
 import '../cart/cart_controller.dart';
-import '../customers/customers_panel.dart';
 import '../invoices/invoices_list.dart';
 import '../kitchen/kitchen_board.dart';
 import '../orders/menu_orders_feed.dart';
@@ -56,7 +55,6 @@ class ShellScreen extends ConsumerStatefulWidget {
 
 class _ShellScreenState extends ConsumerState<ShellScreen> {
   _PosSection _section = _PosSection.cashier;
-  String? _selectedCategoryId;
   final _search = TextEditingController();
   var _bootstrapInFlight = false;
   var _checkoutInFlight = false;
@@ -65,7 +63,9 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   @override
   void initState() {
     super.initState();
-    _loadBootstrap();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadBootstrap();
+    });
   }
 
   @override
@@ -77,46 +77,49 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
   Future<void> _loadBootstrap() async {
     if (_bootstrapInFlight) return;
     _bootstrapInFlight = true;
-    // Seed permissions from auth session immediately so reports/nav aren't
-    // hidden while bootstrap is in-flight (root cause of missing reports).
-    final session = ref.read(authControllerProvider).valueOrNull;
-    final sessionPerms = session?.permissions;
-    if (sessionPerms != null &&
-        sessionPerms.isNotEmpty &&
-        ref.read(cashierPermissionsProvider).isEmpty) {
-      ref.read(cashierPermissionsProvider.notifier).state =
-          Map<String, dynamic>.from(sessionPerms);
-    }
-    // Offline-only: local SQLite path only — never hit API / sync.
-    final store = await ref.read(localAuthServiceProvider).anyStore();
-    if (store != null) {
-      ref.read(currentStoreIdProvider.notifier).state = store.localId;
-      ref.read(posConnectedModeProvider.notifier).state = false;
-      ref.read(cartControllerProvider.notifier).setTaxRate(store.taxRate);
-    }
-    final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId != null) {
-      final shift = await ref
-          .read(shiftServiceProvider)
-          .currentOpen(workspaceId);
-      if (shift != null) {
-        ref.read(currentShiftIdProvider.notifier).state = shift.localId;
+    try {
+      // Seed permissions from the PIN/session. Never replace a non-empty map
+      // with {} — that blocks checkout with "لا تملك صلاحية إنشاء طلبات".
+      final session = ref.read(authControllerProvider).valueOrNull;
+      final sessionPerms = session?.permissions;
+      if (sessionPerms != null &&
+          sessionPerms.isNotEmpty &&
+          ref.read(cashierPermissionsProvider).isEmpty) {
+        ref.read(cashierPermissionsProvider.notifier).state =
+            Map<String, dynamic>.from(sessionPerms);
       }
+      // Offline-only: local SQLite path only — never hit API / sync.
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      if (store != null) {
+        ref.read(currentStoreIdProvider.notifier).state = store.localId;
+        ref.read(posConnectedModeProvider.notifier).state = false;
+        ref.read(cartControllerProvider.notifier).setTaxRate(store.taxRate);
+      }
+      final workspaceId = ref.read(workspaceIdProvider);
+      if (workspaceId != null) {
+        final shift = await ref
+            .read(shiftServiceProvider)
+            .currentOpen(workspaceId);
+        if (shift != null) {
+          ref.read(currentShiftIdProvider.notifier).state = shift.localId;
+        }
+      }
+      _applyBootstrapPayload({
+        'pos_enabled': true,
+        'permissions': sessionPerms ?? const {},
+        'workspace': session?.workspace,
+        'user': session?.user,
+        'settings': {'tax_rate': store?.taxRate ?? 0},
+      }, fromCache: true);
+      if (workspaceId != null) {
+        ref.invalidate(localPosReadyProvider(workspaceId));
+        ref.invalidate(catalogItemsProvider);
+        ref.invalidate(categoriesProvider);
+      }
+    } finally {
+      _bootstrapInFlight = false;
+      if (mounted) setState(() {});
     }
-    _applyBootstrapPayload({
-      'pos_enabled': true,
-      'permissions': sessionPerms ?? const {},
-      'workspace': session?.workspace,
-      'user': session?.user,
-      'settings': {'tax_rate': store?.taxRate ?? 0},
-    }, fromCache: true);
-    if (workspaceId != null) {
-      ref.invalidate(localPosReadyProvider(workspaceId));
-      ref.invalidate(catalogItemsProvider);
-      ref.invalidate(categoriesProvider);
-    }
-    if (mounted) setState(() {});
-    _bootstrapInFlight = false;
   }
 
   void _applyBootstrapPayload(
@@ -131,19 +134,21 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     }
     if (data['permissions'] is Map) {
       final perms = Map<String, dynamic>.from(data['permissions'] as Map);
-      ref.read(cashierPermissionsProvider.notifier).state = perms;
-      ref
-          .read(authControllerProvider.notifier)
-          .applyBootstrapSnapshot(
-            permissions: perms,
-            workspace: data['workspace'] is Map
-                ? Map<String, dynamic>.from(data['workspace'] as Map)
-                : null,
-            entitlements: data['entitlements'] is Map
-                ? Map<String, dynamic>.from(data['entitlements'] as Map)
-                : null,
-            posEnabled: data['pos_enabled'] == true ? true : null,
-          );
+      if (perms.isNotEmpty) {
+        ref.read(cashierPermissionsProvider.notifier).state = perms;
+        ref
+            .read(authControllerProvider.notifier)
+            .applyBootstrapSnapshot(
+              permissions: perms,
+              workspace: data['workspace'] is Map
+                  ? Map<String, dynamic>.from(data['workspace'] as Map)
+                  : null,
+              entitlements: data['entitlements'] is Map
+                  ? Map<String, dynamic>.from(data['entitlements'] as Map)
+                  : null,
+              posEnabled: data['pos_enabled'] == true ? true : null,
+            );
+      }
     }
     if (mounted) setState(() {});
   }
@@ -160,10 +165,10 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           PosShellTab.menu => _PosSection.menu,
           PosShellTab.kitchen => _PosSection.kitchen,
           PosShellTab.invoices => _PosSection.invoices,
-          PosShellTab.customers => _PosSection.customers,
+          PosShellTab.customers => _PosSection.cashier,
           PosShellTab.items => _PosSection.items,
           PosShellTab.reports => _PosSection.reports,
-          PosShellTab.sync => _PosSection.settings, // sync removed — offline only
+          PosShellTab.sync => _PosSection.settings,
           PosShellTab.settings => _PosSection.settings,
         };
       });
@@ -201,26 +206,38 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
             onSelect: (s) => setState(() => _section = s),
           ),
           Expanded(
-            child: switch (_section) {
-              _PosSection.cashier => _CashierHome(
-                isDesktop: isDesktop,
-                isTablet: isTablet,
-                search: _search,
-                selectedCategoryId: _selectedCategoryId,
-                onCategory: (id) => setState(() => _selectedCategoryId = id),
-                onCheckout: _checkout,
-                onOpenMobileCart: () => _openCartSheet(context),
-              ),
-              _PosSection.tables => const TablesBoard(),
-              _PosSection.orders => const OrdersList(),
-              _PosSection.menu => const MenuOrdersFeed(),
-              _PosSection.kitchen => const KitchenBoard(),
-              _PosSection.invoices => const InvoicesList(),
-              _PosSection.customers => const CustomersPanel(),
-              _PosSection.items => const ItemsAdminPanel(),
-              _PosSection.reports => const DailyReportsPanel(),
-              _PosSection.settings => const SettingsPanel(),
-            },
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Offstage(
+                  offstage: _section != _PosSection.cashier,
+                  child: TickerMode(
+                    enabled: _section == _PosSection.cashier,
+                    child: ExcludeFocus(
+                      excluding: _section != _PosSection.cashier,
+                      child: _CashierHome(
+                        isDesktop: isDesktop,
+                        isTablet: isTablet,
+                        search: _search,
+                        onCheckout: _checkout,
+                      ),
+                    ),
+                  ),
+                ),
+                if (_section != _PosSection.cashier)
+                  Positioned.fill(
+                    child: Material(
+                      color: HasimColors.page,
+                      child: SizedBox.expand(
+                        child: KeyedSubtree(
+                          key: ValueKey(_section),
+                          child: _sectionPanel(_section),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -228,6 +245,23 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ? _MobileCartFab(onOpen: () => _openCartSheet(context))
           : null,
     );
+  }
+
+  /// Build only the selected non-cashier panel. IndexedStack of every tab
+  /// rebuilt the whole scaffold (including the nav) when any panel threw.
+  Widget _sectionPanel(_PosSection section) {
+    return switch (section) {
+      _PosSection.cashier => const SizedBox.shrink(),
+      _PosSection.tables => const TablesBoard(),
+      _PosSection.orders => const OrdersList(),
+      _PosSection.menu => const MenuOrdersFeed(),
+      _PosSection.kitchen => const KitchenBoard(),
+      _PosSection.invoices => const InvoicesList(),
+      _PosSection.customers => const SizedBox.shrink(),
+      _PosSection.items => const ItemsAdminPanel(),
+      _PosSection.reports => const DailyReportsPanel(),
+      _PosSection.settings => const SettingsPanel(),
+    };
   }
 
   Future<void> _openCartSheet(BuildContext context) async {
@@ -257,7 +291,11 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
     if (_checkoutInFlight) return;
     final cart = ref.read(cartControllerProvider);
     if (cart.lines.isEmpty) return;
-    final perms = ref.read(cashierPermissionsProvider);
+    final session = ref.read(authControllerProvider).valueOrNull;
+    final perms = CashierPermissions.resolve(
+      ref.read(cashierPermissionsProvider),
+      session?.permissions,
+    );
     if (!CashierPermissions.canCreateOrders(perms)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('لا تملك صلاحية إنشاء طلبات.')),
@@ -280,8 +318,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       ).showSnackBar(const SnackBar(content: Text('لا توجد مساحة عمل محددة.')));
       return;
     }
-
-    final session = ref.read(authControllerProvider).valueOrNull;
 
     var shiftId = ref.read(currentShiftIdProvider);
     shiftId ??= (await ref.read(shiftServiceProvider).currentOpen(workspaceId))
@@ -317,15 +353,37 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ref.read(currentStoreIdProvider.notifier).state = store.localId;
         }
       }
-      String? sessionId = cart.tableLocalId == null
-          ? null
-          : await ref
-                .read(tableSessionServiceProvider)
-                .open(
-                  workspaceId: workspaceId,
-                  tableLocalId: cart.tableLocalId!,
-                  openedByUserId: ref.read(currentLocalUserIdProvider),
-                );
+      String? tableLocalId = cart.tableLocalId?.trim();
+      if (tableLocalId != null && tableLocalId.isEmpty) tableLocalId = null;
+      var tableServerId = cart.tableId;
+      if (cart.channel == OrderChannel.table) {
+        final tables = await ref.read(tablesRepositoryProvider).listTables(
+              workspaceId,
+            );
+        Map<String, dynamic>? match;
+        for (final row in tables) {
+          final local = '${row['local_id'] ?? ''}'.trim();
+          final sid = asInt(row['id'] ?? row['server_id']);
+          if (tableLocalId != null && local == tableLocalId) {
+            match = row;
+            break;
+          }
+          if (tableServerId != null && sid == tableServerId) {
+            match = row;
+            break;
+          }
+        }
+        if (match == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('الطاولة غير متاحة محليًا.')),
+          );
+          return;
+        }
+        tableLocalId = '${match['local_id'] ?? tableLocalId ?? ''}'.trim();
+        if (tableLocalId.isEmpty) tableLocalId = null;
+        tableServerId = asInt(match['id'] ?? match['server_id']) ?? tableServerId;
+      }
       final store = await ref.read(localAuthServiceProvider).anyStore();
       final resolvedPerms = CashierPermissions.resolve(
         ref.read(cashierPermissionsProvider),
@@ -342,9 +400,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               orderType: cart.channel.name,
               lines: [for (final line in cart.lines) line.toPriced()],
               payments: payments,
-              tableLocalId: cart.tableLocalId,
-              tableServerId: cart.tableId,
-              sessionLocalId: sessionId,
+              tableLocalId: tableLocalId,
+              tableServerId: tableServerId,
               customerLocalId: cart.customerLocalId,
               notes: cart.notes,
               orderDiscountAmount: cart.discountAmount,
@@ -357,12 +414,16 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               invoicePrefix: store?.invoicePrefix ?? 'INV-',
               permissions: resolvedPerms,
               clearDraftChannel: cart.channel.name,
-              clearDraftTableLocalId: cart.tableLocalId,
+              clearDraftTableLocalId: tableLocalId,
             ),
           );
 
+      final occupiedTable = cart.channel == OrderChannel.table;
       ref.read(cartControllerProvider.notifier).clear();
       _checkoutClientRef = null;
+      ref.read(invoicesRevisionProvider.notifier).state++;
+      ref.read(tablesRevisionProvider.notifier).state++;
+      ref.invalidate(localTablesProvider);
       if (!mounted) return;
 
       await showDialog<void>(
@@ -370,6 +431,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         barrierDismissible: false,
         builder: (context) => _SuccessOrderDialog(
           orderNumber: result.invoiceNumber,
+          tableOccupied: occupiedTable,
           onPrint: () async {
             Navigator.pop(context);
             try {
@@ -380,7 +442,15 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
                     localId: result.invoiceLocalId,
                   );
               if (invoice == null) {
-                throw const PrinterFailure('الفاتورة غير موجودة للطباعة.');
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'تم حفظ الفاتورة ${result.invoiceNumber}. راجع تبويب الفواتير.',
+                    ),
+                  ),
+                );
+                return;
               }
               final printer = await ref.read(
                 printerServiceFutureProvider.future,
@@ -390,16 +460,20 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    printResult.success
+                    printResult.printed
                         ? 'تمت الطباعة. الفاتورة ${result.invoiceNumber}'
-                        : 'اكتمل البيع. ${printResult.message}',
+                        : printResult.message,
                   ),
                 ),
               );
             } catch (e) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('اكتمل البيع. تعذر الطباعة: $e')),
+                SnackBar(
+                  content: Text(
+                    'تم حفظ الفاتورة ${result.invoiceNumber}. يمكنك طباعتها لاحقاً من تبويب الفواتير.',
+                  ),
+                ),
               );
             }
           },
@@ -604,85 +678,98 @@ class _TopNav extends ConsumerWidget {
         ),
       ))
         (_PosSection.items, 'إدارة الأصناف'),
-      (_PosSection.customers, 'العملاء'),
       (_PosSection.settings, 'الإعدادات'),
     ];
     final menuBadge = ref.watch(menuNewOrdersCountProvider);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-      decoration: const BoxDecoration(
-        color: HasimColors.surface,
-        border: Border(bottom: BorderSide(color: HasimColors.border)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final item in items) ...[
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  HsNavPill(
-                    label: item.$2,
-                    selected: section == item.$1,
-                    onTap: () => onSelect(item.$1),
-                  ),
-                  if (item.$1 == _PosSection.menu && menuBadge > 0)
-                    Positioned(
-                      top: -4,
-                      left: -2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: HasimColors.warning,
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text(
-                          '$menuBadge',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
+    return Material(
+      color: HasimColors.surface,
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: HasimColors.border)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final item in items) ...[
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    HsNavPill(
+                      label: item.$2,
+                      selected: section == item.$1,
+                      onTap: () => onSelect(item.$1),
+                    ),
+                    if (item.$1 == _PosSection.menu && menuBadge > 0)
+                      Positioned(
+                        top: -4,
+                        left: -2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: HasimColors.warning,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(
+                            '$menuBadge',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 6),
+                  ],
+                ),
+                const SizedBox(width: 6),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _CashierHome extends ConsumerWidget {
+class _CashierHome extends ConsumerStatefulWidget {
   const _CashierHome({
     required this.isDesktop,
     required this.isTablet,
     required this.search,
-    required this.selectedCategoryId,
-    required this.onCategory,
     required this.onCheckout,
-    required this.onOpenMobileCart,
   });
 
   final bool isDesktop;
   final bool isTablet;
   final TextEditingController search;
-  final String? selectedCategoryId;
-  final ValueChanged<String?> onCategory;
   final Future<void> Function() onCheckout;
-  final VoidCallback onOpenMobileCart;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CashierHome> createState() => _CashierHomeState();
+}
+
+class _CashierHomeState extends ConsumerState<_CashierHome> {
+  String? _categoryId;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDesktop = widget.isDesktop;
+    final isTablet = widget.isTablet;
+    final search = widget.search;
+    final selectedCategoryId = _categoryId;
+    void onCategory(String? id) {
+      if (_categoryId == id) return;
+      setState(() => _categoryId = id);
+    }
+
+    final onCheckout = widget.onCheckout;
     final categories = ref.watch(categoriesProvider);
     final items = ref.watch(catalogItemsProvider);
 
@@ -722,16 +809,14 @@ class _CashierHome extends ConsumerWidget {
                             label: (cat['name'] as String?) ?? '',
                             count: (items.valueOrNull ?? [])
                                 .where(
-                                  (i) =>
-                                      '${i['category_local_id'] ?? i['pos_item_category_id']}' ==
-                                      '${cat['local_id'] ?? cat['id']}',
+                                  (i) => productBelongsToCategory(
+                                    i,
+                                    entityKey(cat),
+                                  ),
                                 )
                                 .length,
-                            selected:
-                                selectedCategoryId ==
-                                '${cat['local_id'] ?? cat['id']}',
-                            onTap: () =>
-                                onCategory('${cat['local_id'] ?? cat['id']}'),
+                            selected: selectedCategoryId == entityKey(cat),
+                            onTap: () => onCategory(entityKey(cat)),
                           ),
                       ],
                     ),
@@ -785,8 +870,8 @@ class _CashierHome extends ConsumerWidget {
                   for (final cat in list)
                     _chip(
                       (cat['name'] as String?) ?? '',
-                      selectedCategoryId == '${cat['local_id'] ?? cat['id']}',
-                      () => onCategory('${cat['local_id'] ?? cat['id']}'),
+                      selectedCategoryId == entityKey(cat),
+                      () => onCategory(entityKey(cat)),
                     ),
                 ],
               ),
@@ -817,8 +902,8 @@ class _CashierHome extends ConsumerWidget {
                     for (final cat in offline)
                       _chip(
                         (cat['name'] as String?) ?? '',
-                        selectedCategoryId == '${cat['local_id'] ?? cat['id']}',
-                        () => onCategory('${cat['local_id'] ?? cat['id']}'),
+                        selectedCategoryId == entityKey(cat),
+                        () => onCategory(entityKey(cat)),
                       ),
                   ],
                 ),
@@ -916,6 +1001,34 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
     if (mounted) setState(() {});
   }
 
+  Widget _catChip(String label, bool selected, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: PosTap(
+        onTap: onTap,
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.brand : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.md),
+            border: Border.all(
+              color: selected ? HasimColors.brand : HasimColors.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? Colors.white : HasimColors.ink,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = ref.watch(catalogItemsProvider);
@@ -979,14 +1092,37 @@ class _ProductsPanelState extends ConsumerState<_ProductsPanel> {
           ],
         ),
         const SizedBox(height: 10),
+        if (widget.showMobileCategories)
+          SizedBox(
+            height: 48,
+            child: ref.watch(categoriesProvider).when(
+              data: (list) => ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _catChip(
+                    'الكل',
+                    selectedCategoryId == null,
+                    () => onCategory(null),
+                  ),
+                  for (final cat in list)
+                    _catChip(
+                      (cat['name'] as String?) ?? '',
+                      selectedCategoryId == entityKey(cat),
+                      () => onCategory(entityKey(cat)),
+                    ),
+                ],
+              ),
+              loading: () => const SizedBox.shrink(),
+              error: (_, _) => const SizedBox.shrink(),
+            ),
+          ),
+        if (widget.showMobileCategories) const SizedBox(height: 10),
         Expanded(
           child: items.when(
             data: (list) {
               final q = search.text.trim().toLowerCase();
               final filtered = list.where((item) {
-                if (selectedCategoryId != null &&
-                    '${item['category_local_id'] ?? item['pos_item_category_id']}' !=
-                        selectedCategoryId) {
+                if (!productBelongsToCategory(item, selectedCategoryId)) {
                   return false;
                 }
                 if (q.isEmpty) return true;
@@ -1097,18 +1233,7 @@ class _CartPanel extends ConsumerStatefulWidget {
 }
 
 class _CartPanelState extends ConsumerState<_CartPanel> {
-  List<Map<String, dynamic>> _tables = const [];
   final _notesController = TextEditingController();
-  var _metaLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Never kick off setState from build — schedule after first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _ensureMeta();
-    });
-  }
 
   @override
   void dispose() {
@@ -1129,29 +1254,11 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
     });
   }
 
-  Future<void> _ensureMeta() async {
-    if (_metaLoaded) return;
-    _metaLoaded = true;
-    final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId == null || workspaceId <= 0) return;
-    try {
-      // Local SQLite only — never hit the network from the cart panel.
-      final local = await ref
-          .read(tablesRepositoryProvider)
-          .listTables(workspaceId);
-      if (!mounted) return;
-      if (local.isNotEmpty) {
-        setState(() => _tables = local);
-      }
-    } catch (_) {
-      // Offline — takeaway still works without tables list.
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartControllerProvider);
     final notifier = ref.read(cartControllerProvider.notifier);
+    final tables = ref.watch(localTablesProvider).valueOrNull ?? const [];
     if (cart.notes != null &&
         cart.notes!.isNotEmpty &&
         _notesController.text != cart.notes) {
@@ -1194,7 +1301,7 @@ class _CartPanelState extends ConsumerState<_CartPanel> {
                 if (cart.channel == OrderChannel.table) ...[
                   const SizedBox(height: 8),
                   _TablePickerField(
-                    tables: _tables,
+                    tables: tables,
                     selectedId: cart.tableId,
                     onSelected: (id, {String? localId}) =>
                         notifier.setTable(id, tableLocalId: localId),
@@ -1570,11 +1677,13 @@ class _SuccessOrderDialog extends StatelessWidget {
     required this.orderNumber,
     required this.onPrint,
     required this.onContinue,
+    this.tableOccupied = false,
   });
 
   final String orderNumber;
   final VoidCallback onPrint;
   final VoidCallback onContinue;
+  final bool tableOccupied;
 
   @override
   Widget build(BuildContext context) {
@@ -1598,18 +1707,26 @@ class _SuccessOrderDialog extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             const Text(
-              'تم إنشاء الطلب بنجاح',
+              'تم حفظ الفاتورة',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 4),
             Text(
-              'رقم الطلب: #$orderNumber',
+              'رقم الفاتورة: $orderNumber',
               style: const TextStyle(color: HasimColors.muted),
             ),
-            const SizedBox(height: 18),
-            HsPrimaryButton(label: 'طباعة الفاتورة', onPressed: onPrint),
             const SizedBox(height: 8),
-            HsOutlineButton(label: 'بدون فاتورة', onPressed: onContinue),
+            Text(
+              tableOccupied
+                  ? 'الفاتورة محفوظة في تبويب الفواتير، والطاولة أصبحت مشغولة فوراً.'
+                  : 'الفاتورة محفوظة في تبويب الفواتير حتى بدون طابعة.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+            ),
+            const SizedBox(height: 18),
+            HsPrimaryButton(label: 'تم', onPressed: onContinue),
+            const SizedBox(height: 8),
+            HsOutlineButton(label: 'طباعة الآن (اختياري)', onPressed: onPrint),
           ],
         ),
       ),

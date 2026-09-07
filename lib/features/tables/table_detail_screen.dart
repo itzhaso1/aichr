@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
+import '../../core/config/app_config.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/network/cashier_link.dart';
 import '../../core/offline/conflict_strategy.dart';
@@ -17,6 +18,8 @@ import '../../core/util/json_numbers.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/occupied_duration_label.dart';
+import '../../core/util/occupied_duration.dart';
 import 'table_action_wizards.dart';
 import 'table_add_order_sheet.dart';
 import 'table_order_editor.dart';
@@ -74,7 +77,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       _sessionClientId != null ||
       _detail?['status'] == 'occupied' ||
       _detail?['session_open'] == true ||
-      _pendingSyncCount > 0;
+      _pendingSyncCount > 0 ||
+      _localPendingOrders.isNotEmpty;
 
   bool get _canAddOrder =>
       _hasSession || _detail?['status'] == 'occupied';
@@ -113,7 +117,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       if (mounted) setState(() => _localPendingOrders = const []);
       return;
     }
-    final orders = await ref.read(ordersRepositoryProvider).listUnsyncedForTable(
+    final orders = await ref.read(ordersRepositoryProvider).listOpenForTable(
           workspaceId: workspaceId,
           tableId: widget.tableId,
         );
@@ -127,20 +131,18 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (_localPendingOrders.isEmpty) return server;
     final merged = [...server];
     for (final order in _localPendingOrders) {
-      final serverId = order['id'];
-      final isPending = order['is_local_pending'] == true;
-      if (!isPending &&
-          serverId is num &&
-          server.any((row) => asInt(row['id']) == serverId.toInt())) {
-        continue;
-      }
-      if (!isPending) continue;
+      final localId = '${order['local_id'] ?? ''}';
+      final already = localId.isNotEmpty &&
+          merged.any((row) => '${row['local_id'] ?? ''}' == localId);
+      if (already) continue;
       merged.add(order);
     }
     return merged;
   }
 
-  int get _pendingSyncCount => _localPendingOrders.length;
+  int get _pendingSyncCount => AppConfig.offlineOnly
+      ? 0
+      : _localPendingOrders.where((o) => o['is_local_pending'] == true).length;
 
   bool _isLocalPending(Map<String, dynamic> order) =>
       order['is_local_pending'] == true;
@@ -226,6 +228,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -253,9 +256,31 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         _loading = false;
         _error = null;
       });
+      if (AppConfig.offlineOnly) return;
     }
 
-    // Repository best-effort remote refresh (no UI if-offline).
+    if (AppConfig.offlineOnly) {
+      if (_localPendingOrders.isNotEmpty) {
+        setState(() {
+          _detail = {
+            'id': widget.tableId,
+            'name': 'طاولة ${widget.tableId}',
+            'status': 'occupied',
+            'orders': const [],
+          };
+          _allTables = localBoard;
+          _loading = false;
+          _error = null;
+        });
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _error = _detail == null ? 'الطاولة غير متاحة محليًا.' : null;
+      });
+      return;
+    }
+
     final refreshed = await repo.loadTableDetail(workspaceId, widget.tableId);
     final board = await repo.listTables(workspaceId);
     await _refreshLocalOrders();
@@ -297,21 +322,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
 
     setState(() {
       _loading = false;
-      _error =
-          'الطاولة غير متاحة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.';
+      _error = 'الطاولة غير متاحة محليًا.';
     });
-  }
-
-  String _durationLabel() {
-    final opened = _detail?['opened_at'] as String?;
-    if (opened == null) return '—';
-    final at = DateTime.tryParse(opened);
-    if (at == null) return '—';
-    final d = DateTime.now().difference(at.toLocal());
-    final h = d.inHours.toString().padLeft(2, '0');
-    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
-    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-    return '$h:$m:$s';
   }
 
   bool _isSyncingLocal(Map<String, dynamic> order) =>
@@ -356,7 +368,9 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           children: [
             Text(
               url ??
-                  'لا يوجد رابط QR محفوظ محليًا لهذه الطاولة. سيظهر بعد المزامنة الأولى.',
+                  (AppConfig.offlineOnly
+                      ? 'لا يوجد رابط QR محفوظ لهذه الطاولة.'
+                      : 'لا يوجد رابط QR محفوظ محليًا لهذه الطاولة. سيظهر بعد المزامنة الأولى.'),
               style: const TextStyle(fontSize: 12),
             ),
             if (token != null) ...[
@@ -434,6 +448,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             deviceId: deviceId,
             tableServerId: widget.tableId,
           );
+      ref.read(tablesRevisionProvider.notifier).state++;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم فتح جلسة الطاولة.')),
@@ -471,17 +486,14 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     );
     if (created == null) return;
     if (!mounted) return;
-    if (created['local_pending'] == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ الطلب — بانتظار الاتصال')),
-      );
-      await _refreshLocalOrders();
-      return;
-    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'تم حفظ الطلب #${created['order_number'] ?? created['id']} على الطاولة.',
+          AppConfig.offlineOnly
+              ? 'تم حفظ الطلب على الطاولة.'
+              : created['local_pending'] == true
+                  ? 'تم حفظ الطلب — بانتظار الاتصال'
+                  : 'تم حفظ الطلب #${created['order_number'] ?? created['id']} على الطاولة.',
         ),
       ),
     );
@@ -548,13 +560,16 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       final workspaceId = _workspaceId;
       if (workspaceId == null) return;
       final localId = '${order['local_id'] ?? ''}';
+      final serverId = asInt(order['id']);
       final resolvedLocalId = localId.isNotEmpty
           ? localId
-          : (await ref.read(ordersRepositoryProvider).findByServerId(
+          : serverId == null
+              ? null
+              : (await ref.read(ordersRepositoryProvider).findByServerId(
                     workspaceId: workspaceId,
-                    serverId: (order['id'] as num).toInt(),
+                    serverId: serverId,
                   ))
-              ?.localId;
+                  ?.localId;
       if (resolvedLocalId == null) return;
       final deviceId =
           await ref.read(deviceIdentityProvider).getOrCreateDeviceId();
@@ -607,7 +622,11 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('هل أنت متأكد من حذف هذا الطلب؟'),
-          content: const Text('سيتم حذف الطلب المحلي من طابور المزامنة.'),
+          content: Text(
+            AppConfig.offlineOnly
+                ? 'سيتم حذف الطلب من هذه الطاولة.'
+                : 'سيتم حذف الطلب المحلي من طابور المزامنة.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -671,13 +690,16 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     final workspaceId = _workspaceId;
     if (workspaceId == null) return;
     final localId = '${order['local_id'] ?? ''}';
+    final serverId = asInt(order['id']);
     final resolved = localId.isNotEmpty
         ? localId
-        : (await ref.read(ordersRepositoryProvider).findByServerId(
+        : serverId == null
+            ? null
+            : (await ref.read(ordersRepositoryProvider).findByServerId(
                   workspaceId: workspaceId,
-                  serverId: (order['id'] as num).toInt(),
+                  serverId: serverId,
                 ))
-            ?.localId;
+                ?.localId;
     if (resolved == null) return;
     final deviceId =
         await ref.read(deviceIdentityProvider).getOrCreateDeviceId();
@@ -883,15 +905,17 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (selected == null || selected.isEmpty) return;
     final selectedById = <int, int>{};
     for (final row in selected) {
-      selectedById[(row['order_item_id'] as num).toInt()] =
-          (row['quantity'] as num).toInt();
+      final rowId = asInt(row['order_item_id']);
+      if (rowId == null) continue;
+      selectedById[rowId] = asIntOr(row['quantity']);
     }
     final moveItems = <Map<String, dynamic>>[];
     var groupAQty = 0;
     var groupBQty = 0;
     for (final item in items) {
-      final id = (item['order_item_id'] as num).toInt();
-      final maxQty = (item['quantity'] as num).toInt();
+      final id = asInt(item['order_item_id']);
+      if (id == null) continue;
+      final maxQty = asIntOr(item['quantity'], 1);
       final qtyA = selectedById[id] ?? 0;
       final qtyB = maxQty - qtyA;
       groupAQty += qtyA;
@@ -977,6 +1001,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   Widget _pendingSyncBanner() {
+    if (AppConfig.offlineOnly) return const SizedBox.shrink();
     final count = _pendingSyncCount;
     if (count <= 0) return const SizedBox.shrink();
     return Container(
@@ -1065,12 +1090,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       final invoice = closed['invoice'] is Map
           ? Map<String, dynamic>.from(closed['invoice'] as Map)
           : null;
-      // Sync in background — show invoice dialog immediately.
-      // ignore: unawaited_futures
-      ref.read(posSyncCoordinatorProvider).flushPendingOrders(
-            workspaceId: workspaceId,
-            deviceId: deviceId,
-          );
+      ref.read(invoicesRevisionProvider.notifier).state++;
+      ref.read(tablesRevisionProvider.notifier).state++;
       if (invoice != null) {
         await _afterCloseInvoiceDialog(invoice);
       } else {
@@ -1092,19 +1113,20 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('تم إغلاق الطاولة'),
+        title: const Text('تم حفظ الفاتورة'),
         content: Text(
-          'تم إنشاء الفاتورة ${invoice['invoice_number'] ?? invoice['id']}\n'
-          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}',
+          'الفاتورة ${invoice['invoice_number'] ?? invoice['id']} محفوظة في تبويب الفواتير.\n'
+          'الإجمالي: ${asDoubleOr(invoice['total_amount']).toStringAsFixed(2)}\n'
+          'الطباعة اختيارية ولا تحتاج طابعة الآن.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'skip'),
-            child: const Text('تم بدون طباعة'),
-          ),
           FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'skip'),
+            child: const Text('تم'),
+          ),
+          TextButton(
             onPressed: () => Navigator.pop(ctx, 'print'),
-            child: const Text('طباعة الفاتورة'),
+            child: const Text('طباعة الآن'),
           ),
         ],
       ),
@@ -1112,17 +1134,19 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (choice != 'print') return;
     try {
       Map<String, dynamic> full = invoice;
-      final serverId = asInt(invoice['id']);
-      if (serverId != null && serverId > 0) {
-        try {
-          final show = await ref
-              .read(cashierApiProvider)
-              .get('/invoices/$serverId');
-          if (show['invoice'] is Map) {
-            full = Map<String, dynamic>.from(show['invoice'] as Map);
+      if (!AppConfig.offlineOnly) {
+        final serverId = asInt(invoice['id']);
+        if (serverId != null && serverId > 0) {
+          try {
+            final show = await ref
+                .read(cashierApiProvider)
+                .get('/invoices/$serverId');
+            if (show['invoice'] is Map) {
+              full = Map<String, dynamic>.from(show['invoice'] as Map);
+            }
+          } catch (_) {
+            // Print local draft when offline / not yet synced.
           }
-        } catch (_) {
-          // Print local draft when offline / not yet synced.
         }
       }
       final printer = await ref.read(printerServiceFutureProvider.future);
@@ -1131,14 +1155,19 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result.success ? 'تمت الطباعة.' : result.message,
+            result.printed ? 'تمت الطباعة.' : result.message,
           ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تم حفظ الفاتورة. يمكنك طباعتها لاحقاً من تبويب الفواتير.',
+          ),
+        ),
+      );
     }
   }
 
@@ -1173,6 +1202,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             tableServerId: widget.tableId,
           );
       if (!mounted) return;
+      ref.read(tablesRevisionProvider.notifier).state++;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم إلغاء الطاولة محليًا.')),
       );
@@ -1187,6 +1217,9 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(tablesRevisionProvider, (prev, next) {
+      if (prev != next) _load();
+    });
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null || _detail == null) {
       return Padding(
@@ -1309,9 +1342,35 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
               asDoubleOr(_detail!['total']).toStringAsFixed(2),
               highlight: true,
             ),
-            _identityChip(
-              'الجلسة',
-              _hasSession ? 'مفتوحة · ${_durationLabel()}' : 'لا توجد جلسة',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'الجلسة',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: HasimColors.muted,
+                  ),
+                ),
+                _hasSession
+                    ? OccupiedDurationLabel(
+                        openedAt: parseOpenedAt(_detail?['opened_at']),
+                        prefix: 'مفتوحة · ',
+                        placeholder: 'مفتوحة',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      )
+                    : const Text(
+                        'لا توجد جلسة',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ],
             ),
           ],
         ),
@@ -1379,12 +1438,17 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
-          Text(
-            _hasSession
-                ? 'جلسة مفتوحة · المدة ${_durationLabel()}'
-                : 'لا توجد جلسة نشطة',
-            style: const TextStyle(fontSize: 12, color: HasimColors.muted),
-          ),
+          _hasSession
+              ? OccupiedDurationLabel(
+                  openedAt: parseOpenedAt(_detail?['opened_at']),
+                  prefix: 'جلسة مفتوحة · المدة ',
+                  placeholder: 'جلسة مفتوحة',
+                  style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+                )
+              : const Text(
+                  'لا توجد جلسة نشطة',
+                  style: TextStyle(fontSize: 12, color: HasimColors.muted),
+                ),
           if (_hasSession) ...[
             const SizedBox(height: 4),
             Text(
@@ -1532,17 +1596,20 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           if (!_hasSession) ...[
             _action('QR المنيو', Icons.qr_code_2_outlined, _showQr),
           ] else ...[
-            ListTile(
-              dense: true,
-              leading: Icon(
-                _moreOpen ? Icons.expand_less : Icons.expand_more,
-                size: 20,
+            Material(
+              color: Colors.transparent,
+              child: ListTile(
+                dense: true,
+                leading: Icon(
+                  _moreOpen ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                ),
+                title: const Text(
+                  'المزيد',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                ),
+                onTap: () => setState(() => _moreOpen = !_moreOpen),
               ),
-              title: const Text(
-                'المزيد',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-              ),
-              onTap: () => setState(() => _moreOpen = !_moreOpen),
             ),
             if (_moreOpen) ...[
               _action(
@@ -1582,23 +1649,26 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     VoidCallback onTap, {
     bool danger = false,
   }) {
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        icon,
-        color: danger ? HasimColors.danger : HasimColors.ink,
-        size: 20,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          fontWeight: FontWeight.w700,
-          fontSize: 13,
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        dense: true,
+        leading: Icon(
+          icon,
           color: danger ? HasimColors.danger : HasimColors.ink,
+          size: 20,
         ),
+        title: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+            color: danger ? HasimColors.danger : HasimColors.ink,
+          ),
+        ),
+        trailing: const Icon(Icons.chevron_left, size: 18),
+        onTap: onTap,
       ),
-      trailing: const Icon(Icons.chevron_left, size: 18),
-      onTap: onTap,
     );
   }
 
@@ -1690,7 +1760,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                     background: HasimColors.ctaSoft,
                                     foreground: HasimColors.ctaDark,
                                   ),
-                                  if (order['sync_label'] != null) ...[
+                                  if (!AppConfig.offlineOnly &&
+                                      order['sync_label'] != null) ...[
                                     const SizedBox(width: 6),
                                     HsBadge(
                                       label: '${order['sync_label']}',
@@ -1773,7 +1844,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                   ),
                                 ],
                               ),
-                              if (order['last_error'] != null) ...[
+                              if (!AppConfig.offlineOnly &&
+                                  order['last_error'] != null) ...[
                                 const SizedBox(height: 6),
                                 Text(
                                   '${order['last_error']}',
@@ -1784,7 +1856,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                   ),
                                 ),
                               ],
-                              if (_isFailedLocal(order)) ...[
+                              if (!AppConfig.offlineOnly &&
+                                  _isFailedLocal(order)) ...[
                                 const SizedBox(height: 8),
                                 Align(
                                   alignment: AlignmentDirectional.centerEnd,

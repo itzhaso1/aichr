@@ -1,7 +1,8 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 
 import '../../local_db/app_database.dart';
-import '../../util/json_numbers.dart';
 import '../domain/pricing_service.dart';
 
 class LocalReportsService {
@@ -11,155 +12,176 @@ class LocalReportsService {
 
   static const recentInvoiceLimit = 100;
 
-  (DateTime, DateTime) _dayRange(DateTime date) {
-    final start = DateTime(date.year, date.month, date.day);
-    return (start, start.add(const Duration(days: 1)));
-  }
-
-  int _asInt(Object? value) => asIntOr(value);
-
   Future<Map<String, dynamic>> daily({
     required int workspaceId,
     required DateTime date,
   }) async {
-    final (from, to) = _dayRange(date);
-    final vars = [
-      Variable.withInt(workspaceId),
-      Variable.withDateTime(from),
-      Variable.withDateTime(to),
-    ];
-
-    final invAgg = (await _db.customSelect(
-      'SELECT COUNT(*) AS c, '
-      'COALESCE(SUM(subtotal), 0) AS subtotal, '
-      'COALESCE(SUM(discount_amount), 0) AS discount, '
-      'COALESCE(SUM(tax_amount), 0) AS tax, '
-      'COALESCE(SUM(total_amount), 0) AS total '
-      'FROM local_invoices '
-      'WHERE workspace_id = ? AND created_at >= ? AND created_at < ?',
-      variables: vars,
-    ).get())
-        .single
-        .data;
-
-    final invoicesCount = _asInt(invAgg['c']);
-    var subtotalCents = _asInt(invAgg['subtotal']);
-    var discountCents = _asInt(invAgg['discount']);
-    var taxCents = _asInt(invAgg['tax']);
-    var grossCents = _asInt(invAgg['total']);
-
-    final orderAgg = (await _db.customSelect(
-      'SELECT COUNT(*) AS c '
-      'FROM local_orders '
-      'WHERE workspace_id = ? AND pos_status != ? '
-      'AND created_at >= ? AND created_at < ?',
-      variables: [
-        Variable.withInt(workspaceId),
-        Variable.withString('cancelled'),
-        Variable.withDateTime(from),
-        Variable.withDateTime(to),
-      ],
-    ).get())
-        .single
-        .data;
-    final ordersCount = _asInt(orderAgg['c']);
-
-    if (grossCents <= 0) {
-      final paid = (await _db.customSelect(
-        'SELECT COALESCE(SUM(subtotal), 0) AS subtotal, '
-        'COALESCE(SUM(discount_amount), 0) AS discount, '
-        'COALESCE(SUM(tax_amount), 0) AS tax, '
-        'COALESCE(SUM(total_amount), 0) AS total '
-        'FROM local_orders '
-        'WHERE workspace_id = ? AND pos_status != ? AND payment_status = ? '
-        'AND created_at >= ? AND created_at < ?',
-        variables: [
-          Variable.withInt(workspaceId),
-          Variable.withString('cancelled'),
-          Variable.withString('paid'),
-          Variable.withDateTime(from),
-          Variable.withDateTime(to),
-        ],
-      ).get())
-          .single
-          .data;
-      subtotalCents = _asInt(paid['subtotal']);
-      discountCents = _asInt(paid['discount']);
-      taxCents = _asInt(paid['tax']);
-      grossCents = _asInt(paid['total']);
+    if (workspaceId <= 0) {
+      return _empty(date);
     }
 
-    final payRows = await _db.customSelect(
-      'SELECT method, COUNT(*) AS c, COALESCE(SUM(amount), 0) AS total '
-      'FROM local_payments '
-      'WHERE workspace_id = ? AND created_at >= ? AND created_at < ? '
-      'GROUP BY method',
-      variables: vars,
-    ).get();
+    // Dart calendar-day filters only. SQL DateTime binds have stalled the
+    // reports tab on "جاري تحميل التقرير…" in offline SQLite builds.
+    final allInvoices = await (_db.select(_db.localInvoices)
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+    final wsInvoices = [
+      for (final row in allInvoices)
+        if (row.workspaceId == workspaceId) row,
+    ];
+    var dayInvoices = [
+      for (final row in wsInvoices)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayInvoices.isEmpty) {
+      dayInvoices = [
+        for (final row in allInvoices)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
-    final retAgg = (await _db.customSelect(
-      'SELECT COUNT(*) AS c, COALESCE(SUM(refund_amount), 0) AS amt '
-      'FROM local_returns '
-      'WHERE workspace_id = ? AND created_at >= ? AND created_at < ?',
-      variables: vars,
-    ).get())
-        .single
-        .data;
-    final returnCount = _asInt(retAgg['c']);
-    final returnCents = _asInt(retAgg['amt']);
+    final allOrders = await _db.select(_db.localOrders).get();
+    final wsOrders = [
+      for (final row in allOrders)
+        if (row.workspaceId == workspaceId) row,
+    ];
+    var dayOrders = [
+      for (final row in wsOrders)
+        if (_invoiceOnBusinessDay(row.createdAt, date) ||
+            _invoiceOnBusinessDay(row.updatedAt, date))
+          row,
+    ];
+    if (dayOrders.isEmpty && dayInvoices.isNotEmpty) {
+      dayOrders = [
+        for (final row in allOrders)
+          if (_invoiceOnBusinessDay(row.createdAt, date) ||
+              _invoiceOnBusinessDay(row.updatedAt, date))
+            row,
+      ];
+    }
 
-    final cogsRow = (await _db.customSelect(
-      'SELECT COALESCE(SUM(i.cost_snapshot * i.quantity), 0) AS cogs '
-      'FROM local_order_items i '
-      'INNER JOIN local_orders o ON o.local_id = i.order_local_id '
-      'WHERE i.workspace_id = ? AND i.is_removed = 0 '
-      'AND o.workspace_id = ? AND o.pos_status != ? AND o.payment_status = ? '
-      'AND o.created_at >= ? AND o.created_at < ?',
-      variables: [
-        Variable.withInt(workspaceId),
-        Variable.withInt(workspaceId),
-        Variable.withString('cancelled'),
-        Variable.withString('paid'),
-        Variable.withDateTime(from),
-        Variable.withDateTime(to),
-      ],
-    ).get())
-        .single
-        .data;
-    final cogsCents = _asInt(cogsRow['cogs']);
+    final allPayments = await _db.select(_db.localPayments).get();
+    final wsPayments = [
+      for (final row in allPayments)
+        if (row.workspaceId == workspaceId) row,
+    ];
+    var dayPayments = [
+      for (final row in wsPayments)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayPayments.isEmpty && dayInvoices.isNotEmpty) {
+      dayPayments = [
+        for (final row in allPayments)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
-    final topRows = await _db.customSelect(
-      'SELECT i.name AS name, SUM(i.quantity) AS qty, '
-      'SUM(i.total_amount) AS rev '
-      'FROM local_order_items i '
-      'INNER JOIN local_orders o ON o.local_id = i.order_local_id '
-      'WHERE i.workspace_id = ? AND i.is_removed = 0 '
-      'AND o.workspace_id = ? AND o.pos_status != ? AND o.payment_status = ? '
-      'AND o.created_at >= ? AND o.created_at < ? '
-      'GROUP BY i.name '
-      'ORDER BY qty DESC '
-      'LIMIT 20',
-      variables: [
-        Variable.withInt(workspaceId),
-        Variable.withInt(workspaceId),
-        Variable.withString('cancelled'),
-        Variable.withString('paid'),
-        Variable.withDateTime(from),
-        Variable.withDateTime(to),
-      ],
-    ).get();
+    final allReturns = await _db.select(_db.localReturns).get();
+    final wsReturns = [
+      for (final row in allReturns)
+        if (row.workspaceId == workspaceId) row,
+    ];
+    var dayReturns = [
+      for (final row in wsReturns)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayReturns.isEmpty && dayInvoices.isNotEmpty) {
+      dayReturns = [
+        for (final row in allReturns)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
-    final invoiceRows = await _db.customSelect(
-      'SELECT local_id, local_invoice_number, invoice_number, '
-      'total_amount, tax_amount, discount_amount, created_at '
-      'FROM local_invoices '
-      'WHERE workspace_id = ? AND created_at >= ? AND created_at < ? '
-      'ORDER BY created_at DESC '
-      'LIMIT $recentInvoiceLimit',
-      variables: vars,
-    ).get();
+    var invoicesCount = dayInvoices.length;
+    var subtotalCents = dayInvoices.fold<int>(0, (s, r) => s + r.subtotal);
+    var discountCents =
+        dayInvoices.fold<int>(0, (s, r) => s + r.discountAmount);
+    var taxCents = dayInvoices.fold<int>(0, (s, r) => s + r.taxAmount);
+    var grossCents = 0;
+    for (final row in dayInvoices) {
+      final fromCol = row.totalAmount;
+      final fromPayload = _payloadCents(row.payloadJson, 'total_amount');
+      grossCents += fromCol > 0 ? fromCol : fromPayload;
+      if (row.subtotal <= 0) {
+        subtotalCents += _payloadCents(row.payloadJson, 'subtotal');
+      }
+    }
+
+    final liveOrders = [
+      for (final o in dayOrders)
+        if (o.posStatus != 'cancelled') o,
+    ];
+    final paidOrders = [
+      for (final o in liveOrders)
+        if (o.paymentStatus == 'paid' || o.posStatus == 'completed') o,
+    ];
+    final openOrders = [
+      for (final o in liveOrders)
+        if (o.paymentStatus != 'paid' && o.posStatus != 'completed') o,
+    ];
+
+    if (grossCents <= 0 && paidOrders.isNotEmpty) {
+      subtotalCents = paidOrders.fold<int>(0, (s, r) => s + r.subtotal);
+      discountCents = paidOrders.fold<int>(0, (s, r) => s + r.discountAmount);
+      taxCents = paidOrders.fold<int>(0, (s, r) => s + r.taxAmount);
+      grossCents = paidOrders.fold<int>(0, (s, r) => s + r.totalAmount);
+    }
+
+    final byMethod = <String, ({int count, int total})>{};
+    for (final p in dayPayments) {
+      final prev = byMethod[p.method];
+      byMethod[p.method] = (
+        count: (prev?.count ?? 0) + 1,
+        total: (prev?.total ?? 0) + p.amount,
+      );
+    }
+
+    var returnCount = 0;
+    var returnCents = 0;
+    for (final r in dayReturns) {
+      returnCount++;
+      returnCents += r.refundAmount;
+    }
+
+    final paidIds = {for (final o in paidOrders) o.localId};
+    final items = paidIds.isEmpty
+        ? const <LocalOrderItem>[]
+        : await (_db.select(_db.localOrderItems)
+              ..where((t) => t.isRemoved.equals(false)))
+            .get();
+
+    var cogsCents = 0;
+    final topAgg = <String, ({int qty, int rev})>{};
+    for (final item in items) {
+      if (!paidIds.contains(item.orderLocalId)) continue;
+      cogsCents += item.costSnapshot * item.quantity;
+      final prev = topAgg[item.name];
+      topAgg[item.name] = (
+        qty: (prev?.qty ?? 0) + item.quantity,
+        rev: (prev?.rev ?? 0) + item.totalAmount,
+      );
+    }
+    final topSorted = topAgg.entries.toList()
+      ..sort((a, b) => b.value.qty.compareTo(a.value.qty));
 
     final netCents = grossCents - returnCents;
+    final invoiceMaps = [
+      for (final row in dayInvoices.take(recentInvoiceLimit))
+        {
+          'id': row.localId,
+          'local_id': row.localId,
+          'invoice_number':
+              row.localInvoiceNumber ?? row.invoiceNumber ?? row.localId,
+          'total_amount': Money.fromCents(
+            row.totalAmount > 0
+                ? row.totalAmount
+                : _payloadCents(row.payloadJson, 'total_amount'),
+          ),
+          'tax_amount': Money.fromCents(row.taxAmount),
+          'discount_amount': Money.fromCents(row.discountAmount),
+          'created_at': row.createdAt.toIso8601String(),
+        },
+    ];
 
     return {
       'date':
@@ -169,7 +191,20 @@ class LocalReportsService {
         'invoice_sales_total': Money.fromCents(grossCents),
         'invoices_total': Money.fromCents(grossCents),
         'invoices_count': invoicesCount,
-        'orders_count': ordersCount,
+        'orders_count': liveOrders.length,
+        'open_orders_count': openOrders.length,
+        'completed_orders_count': paidOrders.length,
+        'cancelled_orders_count': dayOrders
+            .where((o) => o.posStatus == 'cancelled')
+            .length,
+        'paid_orders_count': paidOrders.length,
+        'unpaid_orders_count': openOrders.length,
+        'table_orders_count':
+            liveOrders.where((o) => o.orderType == 'table').length,
+        'takeaway_orders_count':
+            liveOrders.where((o) => o.orderType == 'takeaway').length,
+        'delivery_orders_count':
+            liveOrders.where((o) => o.orderType == 'delivery').length,
         'subtotal': Money.fromCents(subtotalCents),
         'discount_total': Money.fromCents(discountCents),
         'tax_total': Money.fromCents(taxCents),
@@ -180,46 +215,70 @@ class LocalReportsService {
         'return_count': returnCount,
         'return_amount': Money.fromCents(returnCents),
       },
+      'channel_stats': {
+        'table': liveOrders.where((o) => o.orderType == 'table').length,
+        'takeaway': liveOrders.where((o) => o.orderType == 'takeaway').length,
+        'delivery': liveOrders.where((o) => o.orderType == 'delivery').length,
+      },
       'payment_methods': [
-        for (final row in payRows)
+        for (final e in byMethod.entries)
           {
-            'method': row.data['method'],
-            'total': Money.fromCents(_asInt(row.data['total'])),
-            'count': _asInt(row.data['c']),
+            'method': e.key,
+            'total': Money.fromCents(e.value.total),
+            'count': e.value.count,
           },
       ],
       'top_items': [
-        for (final row in topRows)
+        for (final e in topSorted.take(20))
           {
-            'product_name': row.data['name'],
-            'quantity': _asInt(row.data['qty']),
-            'sales': Money.fromCents(_asInt(row.data['rev'])),
+            'product_name': e.key,
+            'quantity': e.value.qty,
+            'sales': Money.fromCents(e.value.rev),
           },
       ],
-      'invoices': [
-        for (final row in invoiceRows)
-          {
-            'id': row.data['local_id'],
-            'local_id': row.data['local_id'],
-            'invoice_number':
-                row.data['local_invoice_number'] ?? row.data['invoice_number'],
-            'total_amount': Money.fromCents(_asInt(row.data['total_amount'])),
-            'tax_amount': Money.fromCents(_asInt(row.data['tax_amount'])),
-            'discount_amount':
-                Money.fromCents(_asInt(row.data['discount_amount'])),
-            'created_at': _invoiceCreatedAt(row.data['created_at']),
-          },
-      ],
+      'invoices': invoiceMaps,
     };
   }
 
-  String _invoiceCreatedAt(Object? raw) {
-    if (raw is DateTime) return raw.toIso8601String();
-    if (raw is int) {
-      final seconds = raw > 100000000000 ? raw ~/ 1000 : raw;
-      return DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toIso8601String();
+  Map<String, dynamic> _empty(DateTime date) {
+    return {
+      'date':
+          '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+      'source': 'local_sqlite',
+      'summary': const {
+        'invoice_sales_total': 0,
+        'invoices_total': 0,
+        'invoices_count': 0,
+        'orders_count': 0,
+      },
+      'channel_stats': const {},
+      'payment_methods': const [],
+      'top_items': const [],
+      'invoices': const [],
+    };
+  }
+
+  int _payloadCents(String raw, String key) {
+    if (raw.isEmpty) return 0;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return 0;
+      final map = Map<String, dynamic>.from(decoded);
+      return Money.toCents(map[key] ?? map['total']);
+    } catch (_) {
+      return 0;
     }
-    return raw?.toString() ?? '';
+  }
+
+  bool _invoiceOnBusinessDay(DateTime created, DateTime date) {
+    final la = created.toLocal();
+    final lb = date.toLocal();
+    if (la.year == lb.year && la.month == lb.month && la.day == lb.day) {
+      return true;
+    }
+    final ua = created.toUtc();
+    final ub = date.toUtc();
+    return ua.year == ub.year && ua.month == ub.month && ua.day == ub.day;
   }
 
   Future<Map<String, dynamic>> stockSnapshot(int workspaceId) async {

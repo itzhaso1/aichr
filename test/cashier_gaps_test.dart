@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hasim_cashier/core/api/cashier_api.dart';
 import 'package:hasim_cashier/core/config/app_config.dart';
 import 'package:hasim_cashier/core/network/cashier_link.dart';
@@ -406,6 +407,16 @@ void main() {
     );
     expect(result.success, isFalse);
     expect(result.message, contains('غير'));
+  });
+
+  test('printInvoice without a printer does not unsaved the invoice', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final printer = PrinterService(UnconfiguredPrinterGateway(), prefs);
+    final result = await printer.printInvoice({'invoice_number': 'INV-1'});
+    expect(result.printed, isFalse);
+    expect(result.success, isTrue);
+    expect(result.message, contains('حفظ'));
   });
 
   test('pusher source refuses start without credentials', () async {

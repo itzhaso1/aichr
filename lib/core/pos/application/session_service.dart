@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
@@ -40,9 +42,17 @@ class TableSessionService {
         workspaceId: workspaceId,
         tableLocalId: tableLocalId,
       );
-      if (existing != null) return existing.localId;
-      final id = _newId();
       final now = DateTime.now();
+      if (existing != null) {
+        await _markTableOccupied(
+          tableLocalId: tableLocalId,
+          sessionClientId: existing.localId,
+          now: now,
+          keepOpenedAt: true,
+        );
+        return existing.localId;
+      }
+      final id = _newId();
       await _db
           .into(_db.localSessions)
           .insert(
@@ -58,16 +68,52 @@ class TableSessionService {
               updatedAt: now,
             ),
           );
-      await (_db.update(
-        _db.localTables,
-      )..where((t) => t.localId.equals(tableLocalId))).write(
-        LocalTablesCompanion(
-          status: const Value('occupied'),
-          updatedAt: Value(now),
-        ),
+      await _markTableOccupied(
+        tableLocalId: tableLocalId,
+        sessionClientId: id,
+        now: now,
+        keepOpenedAt: false,
       );
       return id;
     });
+  }
+
+  Future<void> _markTableOccupied({
+    required String tableLocalId,
+    required String sessionClientId,
+    required DateTime now,
+    required bool keepOpenedAt,
+  }) async {
+    final row = await (_db.select(
+      _db.localTables,
+    )..where((t) => t.localId.equals(tableLocalId))).getSingleOrNull();
+    final payload = <String, dynamic>{};
+    if (row != null && row.payloadJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(row.payloadJson);
+        if (decoded is Map) {
+          payload.addAll(Map<String, dynamic>.from(decoded));
+        }
+      } catch (_) {}
+    }
+    final existingOpened = '${payload['opened_at'] ?? ''}'.trim();
+    final existingClient = '${payload['session_client_id'] ?? ''}'.trim();
+    payload['status'] = 'occupied';
+    payload['session_open'] = true;
+    payload['session_client_id'] =
+        existingClient.isNotEmpty ? existingClient : sessionClientId;
+    if (!keepOpenedAt || existingOpened.isEmpty) {
+      payload['opened_at'] = now.toUtc().toIso8601String();
+    }
+    await (_db.update(
+      _db.localTables,
+    )..where((t) => t.localId.equals(tableLocalId))).write(
+      LocalTablesCompanion(
+        status: const Value('occupied'),
+        payloadJson: Value(jsonEncode(payload)),
+        updatedAt: Value(now),
+      ),
+    );
   }
 
   Future<void> setNotes({
@@ -203,15 +249,37 @@ class TableSessionService {
           updatedAt: Value(now),
         ),
       );
-      await (_db.update(
-        _db.localTables,
-      )..where((t) => t.localId.equals(session.tableLocalId))).write(
-        LocalTablesCompanion(
-          status: const Value('available'),
-          updatedAt: Value(now),
-        ),
-      );
+      await _clearTableOccupation(session.tableLocalId, now);
     });
+  }
+
+  Future<void> _clearTableOccupation(String tableLocalId, DateTime now) async {
+    final row = await (_db.select(
+      _db.localTables,
+    )..where((t) => t.localId.equals(tableLocalId))).getSingleOrNull();
+    final payload = <String, dynamic>{};
+    if (row != null && row.payloadJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(row.payloadJson);
+        if (decoded is Map) {
+          payload.addAll(Map<String, dynamic>.from(decoded));
+        }
+      } catch (_) {}
+    }
+    payload['status'] = 'available';
+    payload['session_open'] = false;
+    payload['session_id'] = null;
+    payload['session_client_id'] = null;
+    payload['opened_at'] = null;
+    await (_db.update(
+      _db.localTables,
+    )..where((t) => t.localId.equals(tableLocalId))).write(
+      LocalTablesCompanion(
+        status: const Value('available'),
+        payloadJson: Value(jsonEncode(payload)),
+        updatedAt: Value(now),
+      ),
+    );
   }
 
   Future<void> cancel({
@@ -235,14 +303,7 @@ class TableSessionService {
           updatedAt: Value(now),
         ),
       );
-      await (_db.update(
-        _db.localTables,
-      )..where((t) => t.localId.equals(session.tableLocalId))).write(
-        LocalTablesCompanion(
-          status: const Value('available'),
-          updatedAt: Value(now),
-        ),
-      );
+      await _clearTableOccupation(session.tableLocalId, now);
     });
   }
 }

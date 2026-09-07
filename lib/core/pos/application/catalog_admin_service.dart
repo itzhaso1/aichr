@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../local_db/app_database.dart';
+import '../../local_db/local_ids.dart';
 import '../domain/pricing_service.dart';
 import '../pos_permissions.dart';
 
@@ -169,18 +172,33 @@ class CatalogAdminService {
     String? number,
     Map<String, dynamic>? permissions,
   }) async {
-    PosPermissions.require(permissions, PosPermissions.catalog);
-    final localId = _newId();
+    PosPermissions.require(permissions, PosPermissions.tables);
+    final trimmed = name.trim();
+    final existing = await (_db.select(_db.localTables)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .get();
+    var nextId = 1;
+    for (final row in existing) {
+      final sid = row.serverId;
+      if (sid != null && sid >= nextId) nextId = sid + 1;
+    }
+    final localId = LocalIds.table(workspaceId, nextId);
     final now = DateTime.now();
-    await _db
-        .into(_db.localTables)
-        .insert(
+    await _db.into(_db.localTables).insert(
           LocalTablesCompanion.insert(
             localId: localId,
             workspaceId: workspaceId,
-            name: name.trim(),
-            tableNumber: Value(number ?? name.trim()),
+            serverId: Value(nextId),
+            name: trimmed,
+            tableNumber: Value(number ?? trimmed),
             status: const Value('available'),
+            payloadJson: Value(
+              jsonEncode({
+                'id': nextId,
+                'name': trimmed,
+                'status': 'available',
+              }),
+            ),
             createdAt: Value(now),
             updatedAt: now,
           ),

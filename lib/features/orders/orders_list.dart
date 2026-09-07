@@ -198,6 +198,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
           .read(posSyncCoordinatorProvider)
           .flushPendingOrders(workspaceId: workspaceId, deviceId: deviceId);
       if (!mounted) return;
+      ref.read(invoicesRevisionProvider.notifier).state++;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -223,9 +224,7 @@ class _OrdersListState extends ConsumerState<OrdersList> {
       return;
     }
     final localIdRaw = '${order['local_id'] ?? ''}'.trim();
-    final numericId = (order['id'] is num)
-        ? (order['id'] as num).toInt()
-        : int.tryParse('${order['id'] ?? ''}');
+    final numericId = asInt(order['id']);
     if (localIdRaw.isEmpty && numericId == null) return;
     final items = order['items'] is List
         ? (order['items'] as List).whereType<Map>().toList()

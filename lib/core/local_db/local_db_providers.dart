@@ -45,6 +45,15 @@ final tablesRepositoryProvider = Provider<TablesRepository>((ref) {
   );
 });
 
+final localTablesProvider = FutureProvider<List<Map<String, dynamic>>>((
+  ref,
+) async {
+  ref.watch(tablesRevisionProvider);
+  final workspaceId = ref.watch(workspaceIdProvider);
+  if (workspaceId == null || workspaceId <= 0) return const [];
+  return ref.watch(tablesRepositoryProvider).listTables(workspaceId);
+});
+
 final syncQueueRepositoryProvider = Provider<SyncQueueRepository>((ref) {
   return SyncQueueRepository(ref.watch(appDatabaseProvider));
 });
@@ -70,6 +79,12 @@ final ordersRepositoryProvider = Provider<OrdersRepository>((ref) {
 final localFinanceRepositoryProvider = Provider<LocalFinanceRepository>((ref) {
   return LocalFinanceRepository(ref.watch(appDatabaseProvider));
 });
+
+/// Bumped after a local sale so the invoices tab reloads without sync.
+final invoicesRevisionProvider = StateProvider<int>((ref) => 0);
+
+/// Bumped after table occupy / close so the board updates without a pull-to-refresh.
+final tablesRevisionProvider = StateProvider<int>((ref) => 0);
 
 final syncPullApplierProvider = Provider<SyncPullApplier>((ref) {
   return SyncPullApplier(

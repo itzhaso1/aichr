@@ -9,6 +9,7 @@ import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_mode.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 import '../cart/cart_controller.dart';
 
@@ -72,6 +73,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           _loading = false;
         });
         ref.invalidate(catalogItemsProvider);
+        ref.invalidate(categoriesProvider);
         return;
       }
       final api = ref.read(cashierApiProvider);
@@ -103,6 +105,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
         _loading = false;
       });
       ref.invalidate(catalogItemsProvider);
+      ref.invalidate(categoriesProvider);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -139,12 +142,12 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           await admin.createProduct(
             workspaceId: workspaceId,
             name: '${result['name']}',
-            price: (result['price'] as num?)?.toDouble() ?? 0,
+            price: asDoubleOr(result['price']),
             sku: result['sku'] as String?,
             barcode: result['barcode'] as String?,
-            cost: (result['cost'] as num?)?.toDouble() ?? 0,
-            taxRate: (result['tax_rate'] as num?)?.toDouble() ?? 0,
-            stock: (result['stock'] as num?)?.toInt(),
+            cost: asDoubleOr(result['cost']),
+            taxRate: asDoubleOr(result['tax_rate']),
+            stock: asInt(result['stock']),
             trackStock: result['track_stock'] == true,
             categoryLocalId: result['category_local_id'] as String?,
             permissions: session?.permissions ?? _perms,
@@ -154,12 +157,13 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             workspaceId: workspaceId,
             localId: '${existing['local_id'] ?? existing['id']}',
             name: '${result['name']}',
-            price: (result['price'] as num?)?.toDouble(),
+            price: asDouble(result['price']),
             sku: result['sku'] as String?,
             barcode: result['barcode'] as String?,
-            cost: (result['cost'] as num?)?.toDouble(),
-            stock: (result['stock'] as num?)?.toInt(),
+            cost: asDouble(result['cost']),
+            stock: asInt(result['stock']),
             permissions: session?.permissions ?? _perms,
+            categoryLocalId: result['category_local_id'] as String?,
           );
         }
         if (!mounted) return;
@@ -530,7 +534,7 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
                         ),
                       ),
                       Text(
-                        ((item['price'] as num?) ?? 0).toStringAsFixed(2),
+                        asDoubleOr(item['price']).toStringAsFixed(2),
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
                           color: HasimColors.ctaDark,
@@ -579,8 +583,27 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
   late final TextEditingController _desc;
   late final TextEditingController _price;
   late final TextEditingController _currency;
-  int? _categoryId;
+  String? _categoryLocalId;
   var _active = true;
+
+  String? _existingCategoryKey(Map<String, dynamic>? e) {
+    if (e == null) return null;
+    final local = '${e['category_local_id'] ?? ''}'.trim();
+    if (local.isNotEmpty) return local;
+    final sid = '${e['pos_item_category_id'] ?? ''}'.trim();
+    for (final c in widget.categories) {
+      final key = entityKey(c);
+      if (key.isEmpty) continue;
+      if (key == sid || '${c['id']}' == sid || '${c['local_id']}' == sid) {
+        return key;
+      }
+    }
+    if (e['category'] is Map) {
+      final fromNested = entityKey(e['category'] as Map);
+      if (fromNested.isNotEmpty) return fromNested;
+    }
+    return sid.isEmpty ? null : sid;
+  }
 
   @override
   void initState() {
@@ -593,14 +616,10 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     _size = TextEditingController(text: '${e?['size_label'] ?? ''}');
     _desc = TextEditingController(text: '${e?['description'] ?? ''}');
     _price = TextEditingController(
-      text: ((e?['price'] as num?) ?? 0).toStringAsFixed(2),
+      text: asDoubleOr(e?['price']).toStringAsFixed(2),
     );
     _currency = TextEditingController(text: '${e?['currency'] ?? 'SAR'}');
-    _categoryId =
-        (e?['pos_item_category_id'] as num?)?.toInt() ??
-        (e?['category'] is Map
-            ? ((e!['category'] as Map)['id'] as num?)?.toInt()
-            : null);
+    _categoryLocalId = _existingCategoryKey(e);
     _active = e?['is_active'] != false;
   }
 
@@ -642,21 +661,22 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
                 controller: _currency,
                 decoration: const InputDecoration(labelText: 'العملة'),
               ),
-              DropdownButtonFormField<int?>(
-                value: _categoryId,
+              DropdownButtonFormField<String?>(
+                value: _categoryLocalId,
                 decoration: const InputDecoration(labelText: 'التصنيف'),
                 items: [
-                  const DropdownMenuItem<int?>(
+                  const DropdownMenuItem<String?>(
                     value: null,
                     child: Text('— بدون —'),
                   ),
                   for (final c in widget.categories)
-                    DropdownMenuItem<int?>(
-                      value: (c['id'] as num).toInt(),
-                      child: Text('${c['name']}'),
-                    ),
+                    if (c['is_active'] != false && entityKey(c).isNotEmpty)
+                      DropdownMenuItem<String?>(
+                        value: entityKey(c),
+                        child: Text('${c['name']}'),
+                      ),
                 ],
-                onChanged: (v) => setState(() => _categoryId = v),
+                onChanged: (v) => setState(() => _categoryLocalId = v),
               ),
               TextField(
                 controller: _sku,
@@ -709,7 +729,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
               'item_type': _type.text.trim().isEmpty
                   ? 'عام'
                   : _type.text.trim(),
-              'pos_item_category_id': _categoryId,
+              'pos_item_category_id': _categoryLocalId,
+              'category_local_id': _categoryLocalId,
               'size_label': _size.text.trim().isEmpty
                   ? null
                   : _size.text.trim(),

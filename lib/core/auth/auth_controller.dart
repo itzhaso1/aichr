@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../api/cashier_api.dart';
 import '../config/app_config.dart';
 import '../offline/offline_store.dart';
+import '../permissions/permissions_provider.dart';
 import '../pos/application/local_auth_service.dart';
 import '../pos/application/pos_providers.dart';
 import '../pos/pos_errors.dart';
@@ -277,6 +278,10 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
     final wid = session.workspace?['id'];
     if (wid is int) {
       _ref.read(workspaceIdProvider.notifier).state = wid;
+    }
+    if (session.permissions.isNotEmpty) {
+      _ref.read(cashierPermissionsProvider.notifier).state =
+          Map<String, dynamic>.from(session.permissions);
     }
     await OfflineStore.instance.cacheSession(_sessionToCache(session));
     state = AsyncValue.data(session);

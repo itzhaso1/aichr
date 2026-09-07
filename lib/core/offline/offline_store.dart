@@ -150,7 +150,7 @@ class OfflineStore {
 
   Map<String, dynamic>? tableFromBoardCache(int tableId, {int? workspaceId}) {
     for (final table in readTables(workspaceId: workspaceId)) {
-      if ((table['id'] as num?)?.toInt() == tableId) return table;
+      if (asInt(table['id']) == tableId) return table;
     }
     return null;
   }
@@ -179,7 +179,7 @@ class OfflineStore {
     final key =
         (provided != null && provided.trim().isNotEmpty) ? provided.trim() : _uuid.v4();
     final resolvedTable = tableId ??
-        (payload['dining_table_id'] as num?)?.toInt();
+        asInt(payload['dining_table_id']);
     final orderType = '${payload['order_type'] ?? (resolvedTable != null ? 'table' : 'takeaway')}';
     if (workspaceId == null || workspaceId <= 0) {
       throw ArgumentError('workspace id is required to enqueue an order');
@@ -251,7 +251,7 @@ class OfflineStore {
         if (decoded is! Map) continue;
         final map = Map<String, dynamic>.from(decoded);
         if (workspaceId != null &&
-            (map['workspace_id'] as num?)?.toInt() != workspaceId) {
+            asInt(map['workspace_id']) != workspaceId) {
           continue;
         }
         records.add(map);
@@ -328,7 +328,7 @@ class OfflineStore {
     await _patch(localId, (map) {
       map['status'] = SyncStatus.failed.name;
       map['last_error'] = error;
-      final attempts = ((map['attempts'] as num?)?.toInt() ?? 0) + 1;
+      final attempts = asIntOr(map['attempts']) + 1;
       map['attempts'] = attempts;
       map['retry_count'] = attempts;
     });
@@ -339,7 +339,7 @@ class OfflineStore {
     await _patch(localId, (map) {
       map['status'] = SyncStatus.pending.name;
       map['last_error'] = error;
-      final attempts = ((map['attempts'] as num?)?.toInt() ?? 0) + 1;
+      final attempts = asIntOr(map['attempts']) + 1;
       map['attempts'] = attempts;
       map['retry_count'] = attempts;
     });

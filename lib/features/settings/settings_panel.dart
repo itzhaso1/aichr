@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/cashier_api.dart';
 import '../../core/audio/menu_sound_service.dart';
 import '../../core/auth/auth_controller.dart';
+import '../../core/local_db/local_db_providers.dart';
 import '../../core/permissions/cashier_permissions.dart';
 import '../../core/permissions/permissions_provider.dart';
 import '../../core/pos/application/pos_providers.dart';
@@ -274,7 +275,14 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
 
   Future<void> _addLocalTable() async {
     final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId == null) return;
+    if (workspaceId == null || workspaceId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا توجد مساحة عمل. أنشئ متجراً محلياً أولاً.'),
+        ),
+      );
+      return;
+    }
     final name = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
@@ -282,6 +290,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         title: const Text('طاولة جديدة'),
         content: TextField(
           controller: name,
+          autofocus: true,
           decoration: const InputDecoration(labelText: 'اسم / رقم الطاولة'),
         ),
         actions: [
@@ -296,18 +305,30 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ],
       ),
     );
-    if (ok != true || name.text.trim().isEmpty) return;
-    await ref
-        .read(catalogAdminServiceProvider)
-        .createTable(
-          workspaceId: workspaceId,
-          name: name.text.trim(),
-          permissions: ref.read(authControllerProvider).valueOrNull?.permissions,
-        );
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('تمت إضافة الطاولة محلياً.')));
+    final trimmed = name.text.trim();
+    name.dispose();
+    if (ok != true || trimmed.isEmpty) return;
+    try {
+      await ref.read(catalogAdminServiceProvider).createTable(
+            workspaceId: workspaceId,
+            name: trimmed,
+            permissions: CashierPermissions.resolve(
+              ref.read(cashierPermissionsProvider),
+              ref.read(authControllerProvider).valueOrNull?.permissions,
+            ),
+          );
+      ref.invalidate(localTablesProvider);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تمت إضافة الطاولة. افتح تبويب الطاولات لعرضها.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is PosException ? e.messageAr : '$e';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر إضافة الطاولة: $message')),
+      );
+    }
   }
 
   Future<String?> _askBackupPassword({required String title}) async {

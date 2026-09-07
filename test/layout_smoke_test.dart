@@ -155,6 +155,67 @@ void main() {
     expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 
+  testWidgets('transfer wizard accepts string table ids without String-as-num',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () {
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => const TableTransferWizard(
+                    title: 'نقل الطاولة',
+                    currentTableName: 'T1',
+                    candidates: [
+                      {'id': '2', 'name': 'T2', 'status': 'available'},
+                    ],
+                    confirmLabel: 'تأكيد',
+                  ),
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('التالي'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('T2'), findsOneWidget);
+    expect(errors.where((e) => '$e'.contains('subtype')), isEmpty);
+  });
+
+  testWidgets('split bill wizard accepts string qty/price without String-as-num',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SplitBillWizard(
+          sessionTotal: 20,
+          items: [
+            {
+              'name': 'شاي',
+              'quantity': '2',
+              'unit_price': '10.00',
+              'order_item_id': '11',
+            },
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('التالي'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('المتاح: 2'), findsOneWidget);
+    expect(errors.where((e) => '$e'.contains('subtype')), isEmpty);
+  });
+
   testWidgets('nav pills and product hover path do not throw mouse_tracker',
       (tester) async {
     var taps = 0;
@@ -312,6 +373,147 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
+  });
+
+  testWidgets('switching off a hovered product grid does not storm mouse_tracker',
+      (tester) async {
+    var tab = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      HsNavPill(
+                        label: 'الكاشير',
+                        selected: tab == 0,
+                        onTap: () => setState(() => tab = 0),
+                      ),
+                      HsNavPill(
+                        label: 'التقارير',
+                        selected: tab == 1,
+                        onTap: () => setState(() => tab = 1),
+                      ),
+                      HsNavPill(
+                        label: 'الفواتير',
+                        selected: tab == 2,
+                        onTap: () => setState(() => tab = 2),
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Offstage(
+                          offstage: tab != 0,
+                          child: TickerMode(
+                            enabled: tab == 0,
+                            child: GridView.builder(
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 0.7,
+                              ),
+                              itemCount: 9,
+                              itemBuilder: (_, i) => ProductCard(
+                                name: 'صنف $i',
+                                priceLabel: '5.00',
+                                currency: 'SAR',
+                                onAdd: () {},
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (tab == 1)
+                          const Center(child: Text('تقرير يومي')),
+                        if (tab == 2)
+                          const Center(child: Text('قائمة الفواتير')),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(
+      location: tester.getCenter(find.byType(ProductCard).first),
+    );
+    addTearDown(gesture.removePointer);
+    await tester.pump();
+
+    await tester.tap(find.text('التقارير'));
+    await tester.pump();
+    expect(find.text('تقرير يومي'), findsOneWidget);
+
+    await tester.tap(find.text('الفواتير'));
+    await tester.pump();
+    expect(find.text('قائمة الفواتير'), findsOneWidget);
+    expect(find.text('تقرير يومي'), findsNothing);
+
+    await tester.tap(find.text('الكاشير'));
+    await tester.pump();
+    expect(find.text('قائمة الفواتير'), findsNothing);
+    expect(find.text('تقرير يومي'), findsNothing);
+    expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
+  });
+
+  testWidgets('nav pills fire immediately without PosTap gating',
+      (tester) async {
+    var selected = 'الكاشير';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      for (final label in const [
+                        'الكاشير',
+                        'التقارير',
+                        'الفواتير',
+                      ])
+                        HsNavPill(
+                          label: label,
+                          selected: selected == label,
+                          onTap: () => setState(() => selected = label),
+                        ),
+                    ],
+                  ),
+                  Expanded(child: Text('section:$selected')),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.descendant(
+      of: find.byType(HsNavPill).first,
+      matching: find.byType(PosTap),
+    ), findsNothing);
+
+    await tester.tap(find.text('التقارير'));
+    await tester.pump();
+    expect(find.text('section:التقارير'), findsOneWidget);
+
+    await tester.tap(find.text('الفواتير'));
+    await tester.pump();
+    expect(find.text('section:الفواتير'), findsOneWidget);
     expect(hasHitTestStorm(), isFalse, reason: errors.join('\n'));
   });
 }

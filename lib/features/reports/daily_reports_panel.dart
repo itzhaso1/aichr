@@ -13,7 +13,9 @@ import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
 
 class DailyReportsPanel extends ConsumerStatefulWidget {
-  const DailyReportsPanel({super.key});
+  const DailyReportsPanel({super.key, this.active = true});
+
+  final bool active;
 
   @override
   ConsumerState<DailyReportsPanel> createState() => _DailyReportsPanelState();
@@ -37,6 +39,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     });
   }
 
+  @override
+  void didUpdateWidget(covariant DailyReportsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _load();
+    }
+  }
+
   String get _q => DateFormat('yyyy-MM-dd').format(_date);
 
   Future<void> _load() async {
@@ -58,16 +68,30 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     }
 
     try {
-      // Prefer LocalReportsService (aggregates), fall back to finance builder.
       Map<String, dynamic> local;
       try {
         local = await ref
             .read(localReportsServiceProvider)
-            .daily(workspaceId: workspaceId, date: _date);
+            .daily(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
       } catch (_) {
         local = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date);
+            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
+      }
+      final summary = asStringKeyedMap(local['summary']);
+      final invoiceRows = asMapList(local['invoices']);
+      if (invoiceRows.isEmpty && asIntOr(summary['invoices_count']) == 0) {
+        final fromFinance = await ref
+            .read(localFinanceRepositoryProvider)
+            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
+        final financeSummary = asStringKeyedMap(fromFinance['summary']);
+        if (asMapList(fromFinance['invoices']).isNotEmpty ||
+            asIntOr(financeSummary['invoices_count']) > 0) {
+          local = fromFinance;
+        }
       }
       if (!mounted) return;
       setState(() {
@@ -89,7 +113,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // If permissions arrive after first failed paint, reload once they allow reports.
+    ref.listen<int?>(workspaceIdProvider, (prev, next) {
+      if (next != prev && next != null && next > 0) {
+        _load();
+      }
+    });
+    ref.listen<int>(invoicesRevisionProvider, (prev, next) {
+      if (prev != next) _load();
+    });
     ref.listen<Map<String, dynamic>>(cashierPermissionsProvider, (prev, next) {
       final wasDenied = !CashierPermissions.canViewReports(
         CashierPermissions.resolve(
@@ -194,12 +225,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
         children: [
           Row(
             children: [
-              Expanded(
+              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
+                    Text(
                       'التقارير اليومية',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
@@ -207,7 +240,9 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                     ),
                     Text(
                       'ملخص يومي من المبيعات والفواتير المحلية',
-                      style: const TextStyle(
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
                         fontSize: 11,
                         color: HasimColors.muted,
                       ),
@@ -215,19 +250,26 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                   ],
                 ),
               ),
-              OutlinedButton(
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: _date,
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime.now(),
-                  );
-                  if (picked == null) return;
-                  setState(() => _date = picked);
-                  await _load();
-                },
-                child: Text(_q),
+              const SizedBox(width: 8),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _date,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now(),
+                      );
+                      if (picked == null) return;
+                      setState(() => _date = picked);
+                      await _load();
+                    },
+                    child: Text(_q),
+                  ),
+                ),
               ),
             ],
           ),
@@ -601,14 +643,22 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             Expanded(
               child: Text(
                 title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
-            Text(
-              trailing,
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                color: highlight ? HasimColors.ctaDark : HasimColors.ink,
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                trailing,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: highlight ? HasimColors.ctaDark : HasimColors.ink,
+                ),
               ),
             ),
           ],
