@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/api/cashier_api.dart';
 import '../../core/audio/menu_sound_service.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/app_database.dart';
@@ -44,7 +45,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   PrinterTransport _transport = PrinterTransport.network;
   List<LocalUser> _users = const [];
   String? _storeName;
-  LocalShift? _openShift;
+  LocalShift? _currentOpenShift;
 
   Map<String, dynamic> get _perms => CashierPermissions.resolve(
     ref.read(cashierPermissionsProvider),
@@ -116,7 +117,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       }
     }
     if (!mounted) return;
-    setState(() => _openShift = open);
+    setState(() => _currentOpenShift = open);
   }
 
   Future<void> _refreshUsers() async {
@@ -830,7 +831,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   }
 
   Widget _cashCard() {
-    final open = _openShift;
+    final open = _currentOpenShift;
     final currency = _currency.text.trim().isEmpty
         ? 'SAR'
         : _currency.text.trim();
