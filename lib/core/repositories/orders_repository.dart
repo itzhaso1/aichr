@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import '../config/app_config.dart';
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
 import '../local_db/local_ids.dart';
@@ -67,10 +68,13 @@ class OrdersRepository {
 
     final now = DateTime.now();
     final totals = _totals(normalized);
-    final tableLocalId = LocalIds.table(workspaceId, tableId);
+    final table = await _lookupTable(workspaceId, tableId);
+    final resolvedServerId = table?.serverId ?? tableId;
+    final resolvedLocalId =
+        table?.localId ?? LocalIds.table(workspaceId, tableId);
     final apiPayload = _apiCreatePayload(
       orderType: 'table',
-      tableId: tableId,
+      tableId: resolvedServerId,
       clientReference: key,
       notes: notes,
       items: normalized,
@@ -86,9 +90,9 @@ class OrdersRepository {
               deviceId: deviceId.trim(),
               clientReference: key,
               orderType: 'table',
-              tableServerId: Value(tableId),
+              tableServerId: Value(resolvedServerId),
               tableLocalId: Value(
-                await _db.existingFk('local_tables', 'local_id', tableLocalId),
+                await _db.existingFk('local_tables', 'local_id', resolvedLocalId),
               ),
               notes: Value(notes),
               subtotal: Value(Money.toCents(totals.subtotal)),
@@ -147,6 +151,11 @@ class OrdersRepository {
         deviceId: deviceId.trim(),
         orderLocalId: key,
         items: normalized,
+      );
+      await _writeTableSessionSnapshot(
+        workspaceId: workspaceId,
+        tableId: resolvedServerId,
+        now: now,
       );
     });
 
@@ -356,6 +365,14 @@ class OrdersRepository {
       if (!updatedPayload) {
         throw StateError('sync_queue create op missing for $localId');
       }
+      final tableId = order.tableServerId;
+      if (tableId != null && tableId > 0) {
+        await _writeTableSessionSnapshot(
+          workspaceId: workspaceId,
+          tableId: tableId,
+          now: now,
+        );
+      }
     });
 
     return true;
@@ -402,20 +419,32 @@ class OrdersRepository {
     required int tableId,
   }) async {
     if (workspaceId <= 0 || tableId <= 0) return const [];
-    final rows =
-        await (_db.select(_db.localOrders)
-              ..where(
-                (t) =>
-                    t.workspaceId.equals(workspaceId) &
-                    t.tableServerId.equals(tableId),
-              )
-              ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-            .get();
+    final rows = await _ordersForTable(
+      workspaceId: workspaceId,
+      tableId: tableId,
+    );
     final out = <Map<String, dynamic>>[];
     for (final row in rows) {
       out.add(_orderToDisplay(row, await _itemsFor(row.localId)));
     }
     return out;
+  }
+
+  Future<List<Map<String, dynamic>>> listOpenForTable({
+    required int workspaceId,
+    required int tableId,
+  }) async {
+    final all = await listOrdersForTable(
+      workspaceId: workspaceId,
+      tableId: tableId,
+    );
+    return [
+      for (final order in all)
+        if (order['pos_status'] != 'cancelled' &&
+            order['payment_status'] != 'paid' &&
+            order['pos_status'] != 'completed')
+          order,
+    ];
   }
 
   Future<List<Map<String, dynamic>>> listUnsyncedForTable({
@@ -861,13 +890,15 @@ class OrdersRepository {
       'pos_status': order.posStatus,
       'payment_status': order.paymentStatus,
       'sync_status': order.syncStatus,
-      'sync_label': switch (order.syncStatus) {
-        'pending' => 'بانتظار المزامنة',
-        'syncing' => 'جاري المزامنة',
-        'failed' => 'فشلت المزامنة',
-        'synced' => 'تمت المزامنة',
-        _ => order.syncStatus,
-      },
+      'sync_label': AppConfig.offlineOnly
+          ? null
+          : switch (order.syncStatus) {
+              'pending' => 'بانتظار المزامنة',
+              'syncing' => 'جاري المزامنة',
+              'failed' => 'فشلت المزامنة',
+              'synced' => 'تمت المزامنة',
+              _ => order.syncStatus,
+            },
       'last_error': order.lastError,
       'notes': order.notes,
       'discount_amount': Money.fromCents(order.discountAmount),
@@ -892,6 +923,109 @@ class OrdersRepository {
           },
       ],
     };
+  }
+
+  Future<LocalTable?> _lookupTable(int workspaceId, int tableId) async {
+    if (workspaceId <= 0 || tableId <= 0) return null;
+    final byServer = await (_db.select(_db.localTables)
+          ..where(
+            (t) =>
+                t.workspaceId.equals(workspaceId) & t.serverId.equals(tableId),
+          ))
+        .getSingleOrNull();
+    if (byServer != null) return byServer;
+    return (_db.select(_db.localTables)
+          ..where(
+            (t) =>
+                t.workspaceId.equals(workspaceId) &
+                t.localId.equals(LocalIds.table(workspaceId, tableId)),
+          ))
+        .getSingleOrNull();
+  }
+
+  Future<List<LocalOrder>> _ordersForTable({
+    required int workspaceId,
+    required int tableId,
+  }) async {
+    final table = await _lookupTable(workspaceId, tableId);
+    return (_db.select(_db.localOrders)
+          ..where((t) {
+            Expression<bool> match = t.tableServerId.equals(tableId);
+            if (table != null) {
+              match = match | t.tableLocalId.equals(table.localId);
+              final sid = table.serverId;
+              if (sid != null && sid != tableId) {
+                match = match | t.tableServerId.equals(sid);
+              }
+            }
+            return t.workspaceId.equals(workspaceId) & match;
+          })
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+  }
+
+  Future<void> _writeTableSessionSnapshot({
+    required int workspaceId,
+    required int tableId,
+    required DateTime now,
+  }) async {
+    final table = await _lookupTable(workspaceId, tableId);
+    if (table == null) return;
+    final sid = table.serverId ?? tableId;
+    final open = await (_db.select(_db.localOrders)
+          ..where((t) {
+            Expression<bool> match = t.tableServerId.equals(sid) |
+                t.tableLocalId.equals(table.localId);
+            return t.workspaceId.equals(workspaceId) &
+                t.posStatus.isNotValue('cancelled') &
+                t.paymentStatus.isNotValue('paid') &
+                t.posStatus.isNotValue('completed') &
+                match;
+          }))
+        .get();
+    var subtotal = 0;
+    var tax = 0;
+    var discount = 0;
+    var total = 0;
+    final orderMaps = <Map<String, dynamic>>[];
+    for (final order in open) {
+      subtotal += order.subtotal;
+      tax += order.taxAmount;
+      discount += order.discountAmount;
+      total += order.totalAmount;
+      orderMaps.add(_orderToDisplay(order, await _itemsFor(order.localId)));
+    }
+    Map<String, dynamic> payload = const {};
+    try {
+      final decoded = jsonDecode(table.payloadJson);
+      if (decoded is Map) payload = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    final next = {
+      ...payload,
+      'id': sid,
+      'status': 'occupied',
+      'session_open': true,
+      'orders': orderMaps,
+      'orders_count': orderMaps.length,
+      'open_orders_count': orderMaps.length,
+      'subtotal': Money.fromCents(subtotal),
+      'tax_amount': Money.fromCents(tax),
+      'discount_amount': Money.fromCents(discount),
+      'total': Money.fromCents(total),
+    };
+    await (_db.update(_db.localTables)
+          ..where(
+            (t) =>
+                t.localId.equals(table.localId) &
+                t.workspaceId.equals(workspaceId),
+          ))
+        .write(
+      LocalTablesCompanion(
+        status: const Value('occupied'),
+        payloadJson: Value(jsonEncode(next)),
+        updatedAt: Value(now),
+      ),
+    );
   }
 
   Future<void> _recordSaleMovements({

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/api/cashier_api.dart';
+import '../../core/config/app_config.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/sync/pos_sync_coordinator.dart';
 import '../../core/theme/hasim_colors.dart';
@@ -70,7 +71,9 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
       _loading = false;
       if (items.isEmpty) {
         _error = error ??
-            'الكتالوج غير متاح. أكمل المزامنة الأولية أثناء الاتصال.';
+            (AppConfig.offlineOnly
+                ? 'لا توجد أصناف. أضفها من إدارة الأصناف.'
+                : 'الكتالوج غير متاح. أكمل المزامنة الأولية أثناء الاتصال.');
       } else {
         _error = error;
       }
@@ -92,8 +95,34 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
         if (localItems.isNotEmpty) {
           if (!mounted) return;
           _applyCatalog(localItems, localCats);
+          if (AppConfig.offlineOnly) return;
+        } else if (AppConfig.offlineOnly) {
+          if (!mounted) return;
+          _applyCatalog(
+            const [],
+            const [],
+            error: 'لا توجد أصناف. أضفها من إدارة الأصناف.',
+          );
+          return;
         }
       } catch (_) {}
+    }
+    if (AppConfig.offlineOnly) {
+      final items = _cachedCatalog();
+      final cats = _cachedCategories();
+      if (!mounted) return;
+      if (items.isNotEmpty) {
+        _applyCatalog(items, cats);
+      } else if (_catalog.isEmpty) {
+        _applyCatalog(
+          const [],
+          const [],
+          error: 'لا توجد أصناف. أضفها من إدارة الأصناف.',
+        );
+      } else {
+        setState(() => _loading = false);
+      }
+      return;
     }
     try {
       final api = ref.read(cashierApiProvider);
@@ -216,8 +245,9 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
     }
     if (_catalog.isEmpty) {
       setState(
-        () => _error =
-            'الكتالوج غير متاح بدون اتصال. افتح التطبيق وهو متصل لتحميل الأصناف.',
+        () => _error = AppConfig.offlineOnly
+            ? 'لا توجد أصناف. أضفها من إدارة الأصناف.'
+            : 'الكتالوج غير متاح بدون اتصال. افتح التطبيق وهو متصل لتحميل الأصناف.',
       );
       return;
     }
@@ -236,14 +266,15 @@ class _TableAddOrderSheetState extends ConsumerState<TableAddOrderSheet> {
     try {
       // Local-first: SQLite transaction + sync_queue (works fully offline).
       await _saveLocal(clientRef);
-      // Never block the sheet close on network sync.
-      // ignore: unawaited_futures
-      ref.read(posSyncCoordinatorProvider).flushPendingOrders(
-            workspaceId: workspaceId,
-          );
+      if (!AppConfig.offlineOnly) {
+        // ignore: unawaited_futures
+        ref.read(posSyncCoordinatorProvider).flushPendingOrders(
+              workspaceId: workspaceId,
+            );
+      }
       if (!mounted) return;
       Navigator.pop(context, {
-        'local_pending': true,
+        'local_pending': !AppConfig.offlineOnly,
         'client_reference': clientRef,
         'dining_table_id': widget.tableId,
       });

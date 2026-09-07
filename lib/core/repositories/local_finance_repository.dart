@@ -226,10 +226,26 @@ class LocalFinanceRepository {
           payload['invoice_number']?.toString() ??
           row.localId,
       'order_local_id': row.orderLocalId ?? payload['order_local_id'],
-      'subtotal': Money.fromCents(row.subtotal),
-      'discount_amount': Money.fromCents(row.discountAmount),
-      'tax_amount': Money.fromCents(row.taxAmount),
-      'total_amount': Money.fromCents(row.totalAmount),
+      'subtotal': Money.fromCents(
+        row.subtotal > 0
+            ? row.subtotal
+            : Money.toCents(payload['subtotal']),
+      ),
+      'discount_amount': Money.fromCents(
+        row.discountAmount > 0
+            ? row.discountAmount
+            : Money.toCents(payload['discount_amount']),
+      ),
+      'tax_amount': Money.fromCents(
+        row.taxAmount > 0
+            ? row.taxAmount
+            : Money.toCents(payload['tax_amount']),
+      ),
+      'total_amount': Money.fromCents(
+        row.totalAmount > 0
+            ? row.totalAmount
+            : Money.toCents(payload['total_amount'] ?? payload['total']),
+      ),
       'payment_method': payload['payment_method']?.toString(),
       'closed_at':
           payload['closed_at']?.toString() ?? row.createdAt.toIso8601String(),

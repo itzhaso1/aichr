@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
+import '../../core/config/app_config.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/network/cashier_link.dart';
 import '../../core/offline/conflict_strategy.dart';
@@ -74,7 +75,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       _sessionClientId != null ||
       _detail?['status'] == 'occupied' ||
       _detail?['session_open'] == true ||
-      _pendingSyncCount > 0;
+      _pendingSyncCount > 0 ||
+      _localPendingOrders.isNotEmpty;
 
   bool get _canAddOrder =>
       _hasSession || _detail?['status'] == 'occupied';
@@ -113,7 +115,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       if (mounted) setState(() => _localPendingOrders = const []);
       return;
     }
-    final orders = await ref.read(ordersRepositoryProvider).listUnsyncedForTable(
+    final orders = await ref.read(ordersRepositoryProvider).listOpenForTable(
           workspaceId: workspaceId,
           tableId: widget.tableId,
         );
@@ -127,20 +129,18 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (_localPendingOrders.isEmpty) return server;
     final merged = [...server];
     for (final order in _localPendingOrders) {
-      final serverId = order['id'];
-      final isPending = order['is_local_pending'] == true;
-      if (!isPending &&
-          serverId is num &&
-          server.any((row) => asInt(row['id']) == serverId.toInt())) {
-        continue;
-      }
-      if (!isPending) continue;
+      final localId = '${order['local_id'] ?? ''}';
+      final already = localId.isNotEmpty &&
+          merged.any((row) => '${row['local_id'] ?? ''}' == localId);
+      if (already) continue;
       merged.add(order);
     }
     return merged;
   }
 
-  int get _pendingSyncCount => _localPendingOrders.length;
+  int get _pendingSyncCount => AppConfig.offlineOnly
+      ? 0
+      : _localPendingOrders.where((o) => o['is_local_pending'] == true).length;
 
   bool _isLocalPending(Map<String, dynamic> order) =>
       order['is_local_pending'] == true;
@@ -253,9 +253,31 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         _loading = false;
         _error = null;
       });
+      if (AppConfig.offlineOnly) return;
     }
 
-    // Repository best-effort remote refresh (no UI if-offline).
+    if (AppConfig.offlineOnly) {
+      if (_localPendingOrders.isNotEmpty) {
+        setState(() {
+          _detail = {
+            'id': widget.tableId,
+            'name': 'طاولة ${widget.tableId}',
+            'status': 'occupied',
+            'orders': const [],
+          };
+          _allTables = localBoard;
+          _loading = false;
+          _error = null;
+        });
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _error = _detail == null ? 'الطاولة غير متاحة محليًا.' : null;
+      });
+      return;
+    }
+
     final refreshed = await repo.loadTableDetail(workspaceId, widget.tableId);
     final board = await repo.listTables(workspaceId);
     await _refreshLocalOrders();
@@ -297,8 +319,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
 
     setState(() {
       _loading = false;
-      _error =
-          'الطاولة غير متاحة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.';
+      _error = 'الطاولة غير متاحة محليًا.';
     });
   }
 
@@ -356,7 +377,9 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           children: [
             Text(
               url ??
-                  'لا يوجد رابط QR محفوظ محليًا لهذه الطاولة. سيظهر بعد المزامنة الأولى.',
+                  (AppConfig.offlineOnly
+                      ? 'لا يوجد رابط QR محفوظ لهذه الطاولة.'
+                      : 'لا يوجد رابط QR محفوظ محليًا لهذه الطاولة. سيظهر بعد المزامنة الأولى.'),
               style: const TextStyle(fontSize: 12),
             ),
             if (token != null) ...[
@@ -471,17 +494,14 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     );
     if (created == null) return;
     if (!mounted) return;
-    if (created['local_pending'] == true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ الطلب — بانتظار الاتصال')),
-      );
-      await _refreshLocalOrders();
-      return;
-    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'تم حفظ الطلب #${created['order_number'] ?? created['id']} على الطاولة.',
+          AppConfig.offlineOnly
+              ? 'تم حفظ الطلب على الطاولة.'
+              : created['local_pending'] == true
+                  ? 'تم حفظ الطلب — بانتظار الاتصال'
+                  : 'تم حفظ الطلب #${created['order_number'] ?? created['id']} على الطاولة.',
         ),
       ),
     );
@@ -610,7 +630,11 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('هل أنت متأكد من حذف هذا الطلب؟'),
-          content: const Text('سيتم حذف الطلب المحلي من طابور المزامنة.'),
+          content: Text(
+            AppConfig.offlineOnly
+                ? 'سيتم حذف الطلب من هذه الطاولة.'
+                : 'سيتم حذف الطلب المحلي من طابور المزامنة.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -985,6 +1009,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   Widget _pendingSyncBanner() {
+    if (AppConfig.offlineOnly) return const SizedBox.shrink();
     final count = _pendingSyncCount;
     if (count <= 0) return const SizedBox.shrink();
     return Container(
@@ -1120,17 +1145,19 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
     if (choice != 'print') return;
     try {
       Map<String, dynamic> full = invoice;
-      final serverId = asInt(invoice['id']);
-      if (serverId != null && serverId > 0) {
-        try {
-          final show = await ref
-              .read(cashierApiProvider)
-              .get('/invoices/$serverId');
-          if (show['invoice'] is Map) {
-            full = Map<String, dynamic>.from(show['invoice'] as Map);
+      if (!AppConfig.offlineOnly) {
+        final serverId = asInt(invoice['id']);
+        if (serverId != null && serverId > 0) {
+          try {
+            final show = await ref
+                .read(cashierApiProvider)
+                .get('/invoices/$serverId');
+            if (show['invoice'] is Map) {
+              full = Map<String, dynamic>.from(show['invoice'] as Map);
+            }
+          } catch (_) {
+            // Print local draft when offline / not yet synced.
           }
-        } catch (_) {
-          // Print local draft when offline / not yet synced.
         }
       }
       final printer = await ref.read(printerServiceFutureProvider.future);
@@ -1698,7 +1725,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                     background: HasimColors.ctaSoft,
                                     foreground: HasimColors.ctaDark,
                                   ),
-                                  if (order['sync_label'] != null) ...[
+                                  if (!AppConfig.offlineOnly &&
+                                      order['sync_label'] != null) ...[
                                     const SizedBox(width: 6),
                                     HsBadge(
                                       label: '${order['sync_label']}',
@@ -1781,7 +1809,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                   ),
                                 ],
                               ),
-                              if (order['last_error'] != null) ...[
+                              if (!AppConfig.offlineOnly &&
+                                  order['last_error'] != null) ...[
                                 const SizedBox(height: 6),
                                 Text(
                                   '${order['last_error']}',
@@ -1792,7 +1821,8 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
                                   ),
                                 ),
                               ],
-                              if (_isFailedLocal(order)) ...[
+                              if (!AppConfig.offlineOnly &&
+                                  _isFailedLocal(order)) ...[
                                 const SizedBox(height: 8),
                                 Align(
                                   alignment: AlignmentDirectional.centerEnd,

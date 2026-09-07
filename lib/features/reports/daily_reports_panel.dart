@@ -68,16 +68,17 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     }
 
     try {
-      // Prefer LocalReportsService (aggregates), fall back to finance builder.
       Map<String, dynamic> local;
       try {
         local = await ref
             .read(localReportsServiceProvider)
-            .daily(workspaceId: workspaceId, date: _date);
+            .daily(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
       } catch (_) {
         local = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date);
+            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .timeout(const Duration(seconds: 5));
       }
       if (!mounted) return;
       setState(() {
@@ -99,7 +100,11 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // If permissions arrive after first failed paint, reload once they allow reports.
+    ref.listen<int?>(workspaceIdProvider, (prev, next) {
+      if (next != prev && next != null && next > 0) {
+        _load();
+      }
+    });
     ref.listen<Map<String, dynamic>>(cashierPermissionsProvider, (prev, next) {
       final wasDenied = !CashierPermissions.canViewReports(
         CashierPermissions.resolve(

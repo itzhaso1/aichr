@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/api/cashier_api.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/local_db_providers.dart';
@@ -230,7 +231,7 @@ class _CustomersPanelState extends ConsumerState<CustomersPanel> {
                     return ListTile(
                       title: Text('${c['name'] ?? ''}'),
                       subtitle: Text('${c['phone'] ?? ''}'),
-                      trailing: pending
+                      trailing: !AppConfig.offlineOnly && pending
                           ? const Chip(label: Text('بانتظار المزامنة'))
                           : null,
                     );

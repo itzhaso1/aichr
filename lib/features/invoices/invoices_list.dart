@@ -61,10 +61,12 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
 
     try {
       final local = workspaceId != null && workspaceId > 0
-          ? await finance.listInvoices(
-              workspaceId: workspaceId,
-              onDate: _date,
-            )
+          ? await finance
+              .listInvoices(
+                workspaceId: workspaceId,
+                onDate: _date,
+              )
+              .timeout(const Duration(seconds: 5))
           : const <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
@@ -143,6 +145,27 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int?>(workspaceIdProvider, (prev, next) {
+      if (next != prev && next != null && next > 0) {
+        _load();
+      }
+    });
+    try {
+      return _buildBody();
+    } catch (e) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: HsEmpty(
+          title: 'تعذر عرض الفواتير',
+          subtitle: '$e',
+          actionLabel: 'إعادة المحاولة',
+          onAction: _load,
+        ),
+      );
+    }
+  }
+
+  Widget _buildBody() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

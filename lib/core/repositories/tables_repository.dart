@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../api/cashier_api.dart';
+import '../config/app_config.dart';
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
 import '../local_db/local_ids.dart';
@@ -33,7 +34,11 @@ class TablesRepository {
           ..where((t) => t.workspaceId.equals(workspaceId))
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
         .get();
-    return [for (final row in rows) _rowToBoardMap(row)];
+    final unpaid = await _unpaidOrdersInWorkspace(workspaceId);
+    return [
+      for (final row in rows)
+        _rowToBoardMap(row, unpaidOrders: _ordersMatchingTable(row, unpaid)),
+    ];
   }
 
   Future<Map<String, dynamic>?> getTable(
@@ -42,7 +47,8 @@ class TablesRepository {
   ) async {
     final row = await _findTable(workspaceId, serverId: tableServerId);
     if (row == null) return null;
-    return _rowToDetailMap(row);
+    final unpaid = await _unpaidOrdersForTable(row);
+    return _rowToDetailMap(row, unpaidOrders: unpaid);
   }
 
   /// Workspace-scoped local PK so the same server table id can exist in A and B.
@@ -263,7 +269,8 @@ class TablesRepository {
     final payload = _safeMap(existing.payloadJson);
     final existingClient = '${payload['session_client_id'] ?? ''}';
     if (existing.status == 'occupied' && existingClient.isNotEmpty) {
-      return _rowToDetailMap(existing);
+      final unpaid = await _unpaidOrdersForTable(existing);
+      return _rowToDetailMap(existing, unpaidOrders: unpaid);
     }
 
     final sessionClientId = _newId();
@@ -329,13 +336,7 @@ class TablesRepository {
     final paymentLocalId = _newId();
     final now = DateTime.now();
 
-    final activeOrders = await (_db.select(_db.localOrders)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) &
-              t.tableServerId.equals(tableServerId) &
-              t.posStatus.isNotValue('cancelled') &
-              t.paymentStatus.isNotValue('paid')))
-        .get();
+    final activeOrders = await _unpaidOrdersForTable(table);
 
     var subtotalCents = 0;
     var taxCents = 0;
@@ -406,6 +407,11 @@ class TablesRepository {
               workspaceId: workspaceId,
               deviceId: deviceId.trim(),
               invoiceNumber: Value(invoiceNumber),
+              localInvoiceNumber: Value(invoiceNumber),
+              status: const Value('closed'),
+              subtotal: Value(subtotalCents),
+              discountAmount: Value(discountCents),
+              taxAmount: Value(taxCents),
               totalAmount: Value(totalCents),
               syncStatus: const Value('pending'),
               payloadJson: Value(jsonEncode(invoicePayload)),
@@ -488,13 +494,7 @@ class TablesRepository {
     final clientRef = _newId();
     final now = DateTime.now();
 
-    final activeOrders = await (_db.select(_db.localOrders)
-          ..where((t) =>
-              t.workspaceId.equals(workspaceId) &
-              t.tableServerId.equals(tableServerId) &
-              t.posStatus.isNotValue('cancelled') &
-              t.paymentStatus.isNotValue('paid')))
-        .get();
+    final activeOrders = await _unpaidOrdersForTable(table);
 
     final nextPayload = {
       ...payload,
@@ -991,6 +991,7 @@ class TablesRepository {
   /// always returns the best local snapshot after attempting update.
   Future<List<Map<String, dynamic>>> loadBoard(int workspaceId) async {
     final local = await listTables(workspaceId);
+    if (AppConfig.offlineOnly) return local;
     final api = _api;
     if (api == null || workspaceId <= 0) return local;
     try {
@@ -1017,6 +1018,7 @@ class TablesRepository {
     int tableServerId,
   ) async {
     final local = await getTable(workspaceId, tableServerId);
+    if (AppConfig.offlineOnly) return local;
     final api = _api;
     if (api == null || workspaceId <= 0) return local;
     try {
@@ -1041,35 +1043,90 @@ class TablesRepository {
     }
   }
 
-  Map<String, dynamic> _rowToBoardMap(LocalTable row) {
+  Map<String, dynamic> _rowToBoardMap(
+    LocalTable row, {
+    List<LocalOrder> unpaidOrders = const [],
+  }) {
     final payload = _safeMap(row.payloadJson);
+    final totalCents =
+        unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
+    final occupied = unpaidOrders.isNotEmpty || row.status == 'occupied';
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name,
-      'status': row.status,
+      'status': occupied ? 'occupied' : row.status,
       'capacity': row.capacity,
       'session_id': row.sessionServerId ?? payload['session_id'],
       'session_client_id': payload['session_client_id'],
       'workspace_id': row.workspaceId,
+      if (unpaidOrders.isNotEmpty) ...{
+        'orders_count': unpaidOrders.length,
+        'open_orders_count': unpaidOrders.length,
+        'total': Money.fromCents(totalCents),
+      },
     };
   }
 
-  Map<String, dynamic> _rowToDetailMap(LocalTable row) {
+  Map<String, dynamic> _rowToDetailMap(
+    LocalTable row, {
+    List<LocalOrder> unpaidOrders = const [],
+  }) {
     final payload = _safeMap(row.payloadJson);
+    final totalCents =
+        unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
+    final occupied = unpaidOrders.isNotEmpty ||
+        row.status == 'occupied' ||
+        payload['session_open'] == true;
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name.isNotEmpty ? row.name : '${payload['name'] ?? ''}',
-      'status': row.status,
+      'status': occupied ? 'occupied' : row.status,
       'capacity': row.capacity ?? payload['capacity'],
       'session_id': row.sessionServerId ?? payload['session_id'],
       'session_client_id': payload['session_client_id'],
       'workspace_id': row.workspaceId,
+      if (unpaidOrders.isNotEmpty) ...{
+        'session_open': true,
+        'orders_count': unpaidOrders.length,
+        'open_orders_count': unpaidOrders.length,
+        'total': payload['total'] ?? Money.fromCents(totalCents),
+      },
       'orders': payload['orders'] ?? const [],
     };
+  }
+
+  Future<List<LocalOrder>> _unpaidOrdersInWorkspace(int workspaceId) {
+    return (_db.select(_db.localOrders)
+          ..where(
+            (t) =>
+                t.workspaceId.equals(workspaceId) &
+                t.posStatus.isNotValue('cancelled') &
+                t.paymentStatus.isNotValue('paid') &
+                t.posStatus.isNotValue('completed'),
+          ))
+        .get();
+  }
+
+  Future<List<LocalOrder>> _unpaidOrdersForTable(LocalTable table) async {
+    final all = await _unpaidOrdersInWorkspace(table.workspaceId);
+    return _ordersMatchingTable(table, all);
+  }
+
+  List<LocalOrder> _ordersMatchingTable(
+    LocalTable table,
+    List<LocalOrder> orders,
+  ) {
+    final sid = table.serverId;
+    return [
+      for (final order in orders)
+        if (order.tableLocalId == table.localId ||
+            (sid != null && order.tableServerId == sid))
+          order,
+    ];
   }
 
   Map<String, dynamic> _mergePayload(
