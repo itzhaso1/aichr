@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../local_db/app_database.dart';
 import '../../local_db/workspace_scope.dart';
 import '../../repositories/sync_queue_repository.dart';
+import '../../repositories/tables_repository.dart';
 import '../domain/pricing_service.dart';
 import '../pos_errors.dart';
 import '../pos_permissions.dart';
@@ -112,7 +113,9 @@ class CheckoutService {
     this.pricing = const PricingService(),
     String Function()? newId,
     this.faultForTest = CheckoutFaultPoint.none,
-  }) : _newId = newId ?? (() => const Uuid().v4());
+    TablesRepository? tables,
+  }) : _newId = newId ?? (() => const Uuid().v4()),
+       _tables = tables;
 
   final AppDatabase _db;
   final StockEngine _stock;
@@ -121,6 +124,7 @@ class CheckoutService {
   final PricingService pricing;
   final String Function() _newId;
   final CheckoutFaultPoint faultForTest;
+  final TablesRepository? _tables;
 
   Future<CheckoutResult> execute(CheckoutCommand cmd) {
     if (cmd.lines.isEmpty) {
@@ -195,6 +199,7 @@ class CheckoutService {
         storeId: cmd.storeId,
         prefix: cmd.invoicePrefix,
       );
+      final tableInfo = await _tableSnapshot(cmd);
 
       await _db
           .into(_db.localOrders)
@@ -284,6 +289,7 @@ class CheckoutService {
         'total_amount': quote.total,
         'payment_method': cmd.payments.map((p) => p.method).join('+'),
         'closed_at': now.toUtc().toIso8601String(),
+        if (tableInfo != null) 'table': tableInfo,
         'items': [
           for (final line in quote.lineResults)
             {
@@ -321,6 +327,30 @@ class CheckoutService {
             ),
           );
       await _fault(CheckoutFaultPoint.afterInvoice);
+
+      final tables = _tables;
+      if (tables != null &&
+          ((cmd.tableLocalId != null && cmd.tableLocalId!.trim().isNotEmpty) ||
+              cmd.tableServerId != null)) {
+        await tables.occupyFromCheckout(
+          workspaceId: cmd.workspaceId,
+          deviceId: cmd.deviceId,
+          tableLocalId: cmd.tableLocalId,
+          tableServerId: cmd.tableServerId,
+          invoiceLocalId: invoiceId,
+          invoiceNumber: invoiceNumber,
+          total: quote.total,
+          items: [
+            for (final line in quote.lineResults)
+              {
+                'item_name': line.line.name,
+                'quantity': line.line.quantity,
+                'unit_price': line.line.unitPrice,
+                'total_amount': line.total,
+              },
+          ],
+        );
+      }
 
       for (final p in cmd.payments) {
         await _db
@@ -408,6 +438,37 @@ class CheckoutService {
         changeDue: Money.fromCents(changeDueCents),
       );
     });
+  }
+
+  Future<Map<String, dynamic>?> _tableSnapshot(CheckoutCommand cmd) async {
+    final localId = cmd.tableLocalId?.trim();
+    if (localId != null && localId.isNotEmpty) {
+      final byLocal = await (_db.select(
+        _db.localTables,
+      )..where((t) => t.localId.equals(localId))).getSingleOrNull();
+      if (byLocal != null) {
+        return {
+          'id': byLocal.serverId ?? cmd.tableServerId,
+          'name': byLocal.name,
+          'local_id': byLocal.localId,
+        };
+      }
+    }
+    final serverId = cmd.tableServerId;
+    if (serverId == null || serverId <= 0) return null;
+    final byServer = await (_db.select(_db.localTables)
+          ..where(
+            (t) =>
+                t.workspaceId.equals(cmd.workspaceId) &
+                t.serverId.equals(serverId),
+          ))
+        .getSingleOrNull();
+    if (byServer == null) return null;
+    return {
+      'id': byServer.serverId ?? serverId,
+      'name': byServer.name,
+      'local_id': byServer.localId,
+    };
   }
 
   Future<CheckoutResult?> _paidOrder(CheckoutCommand cmd) async {

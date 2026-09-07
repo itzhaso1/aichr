@@ -24,7 +24,6 @@ import '../../core/widgets/hasim_widgets.dart';
 import '../../core/widgets/pos_tap.dart';
 import '../admin/admin_placeholders.dart';
 import '../cart/cart_controller.dart';
-import '../customers/customers_panel.dart';
 import '../invoices/invoices_list.dart';
 import '../kitchen/kitchen_board.dart';
 import '../orders/menu_orders_feed.dart';
@@ -159,7 +158,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           PosShellTab.menu => _PosSection.menu,
           PosShellTab.kitchen => _PosSection.kitchen,
           PosShellTab.invoices => _PosSection.invoices,
-          PosShellTab.customers => _PosSection.customers,
+          PosShellTab.customers => _PosSection.cashier,
           PosShellTab.items => _PosSection.items,
           PosShellTab.reports => _PosSection.reports,
           PosShellTab.sync => _PosSection.settings,
@@ -249,7 +248,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       _PosSection.menu => const MenuOrdersFeed(),
       _PosSection.kitchen => const KitchenBoard(),
       _PosSection.invoices => const InvoicesList(),
-      _PosSection.customers => const CustomersPanel(),
+      _PosSection.customers => const SizedBox.shrink(),
       _PosSection.items => const ItemsAdminPanel(),
       _PosSection.reports => const DailyReportsPanel(),
       _PosSection.settings => const SettingsPanel(),
@@ -343,13 +342,44 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           ref.read(currentStoreIdProvider.notifier).state = store.localId;
         }
       }
-      String? sessionId = cart.tableLocalId == null
+      String? tableLocalId = cart.tableLocalId?.trim();
+      if (tableLocalId != null && tableLocalId.isEmpty) tableLocalId = null;
+      var tableServerId = cart.tableId;
+      if (cart.channel == OrderChannel.table) {
+        final tables = await ref.read(tablesRepositoryProvider).listTables(
+              workspaceId,
+            );
+        Map<String, dynamic>? match;
+        for (final row in tables) {
+          final local = '${row['local_id'] ?? ''}'.trim();
+          final sid = asInt(row['id'] ?? row['server_id']);
+          if (tableLocalId != null && local == tableLocalId) {
+            match = row;
+            break;
+          }
+          if (tableServerId != null && sid == tableServerId) {
+            match = row;
+            break;
+          }
+        }
+        if (match == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('الطاولة غير متاحة محليًا.')),
+          );
+          return;
+        }
+        tableLocalId = '${match['local_id'] ?? tableLocalId ?? ''}'.trim();
+        if (tableLocalId.isEmpty) tableLocalId = null;
+        tableServerId = asInt(match['id'] ?? match['server_id']) ?? tableServerId;
+      }
+      String? sessionId = tableLocalId == null
           ? null
           : await ref
                 .read(tableSessionServiceProvider)
                 .open(
                   workspaceId: workspaceId,
-                  tableLocalId: cart.tableLocalId!,
+                  tableLocalId: tableLocalId,
                   openedByUserId: ref.read(currentLocalUserIdProvider),
                 );
       final store = await ref.read(localAuthServiceProvider).anyStore();
@@ -368,8 +398,8 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               orderType: cart.channel.name,
               lines: [for (final line in cart.lines) line.toPriced()],
               payments: payments,
-              tableLocalId: cart.tableLocalId,
-              tableServerId: cart.tableId,
+              tableLocalId: tableLocalId,
+              tableServerId: tableServerId,
               sessionLocalId: sessionId,
               customerLocalId: cart.customerLocalId,
               notes: cart.notes,
@@ -383,13 +413,16 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
               invoicePrefix: store?.invoicePrefix ?? 'INV-',
               permissions: resolvedPerms,
               clearDraftChannel: cart.channel.name,
-              clearDraftTableLocalId: cart.tableLocalId,
+              clearDraftTableLocalId: tableLocalId,
             ),
           );
 
+      final occupiedTable = cart.channel == OrderChannel.table;
       ref.read(cartControllerProvider.notifier).clear();
       _checkoutClientRef = null;
       ref.read(invoicesRevisionProvider.notifier).state++;
+      ref.read(tablesRevisionProvider.notifier).state++;
+      ref.invalidate(localTablesProvider);
       if (!mounted) return;
 
       await showDialog<void>(
@@ -397,6 +430,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
         barrierDismissible: false,
         builder: (context) => _SuccessOrderDialog(
           orderNumber: result.invoiceNumber,
+          tableOccupied: occupiedTable,
           onPrint: () async {
             Navigator.pop(context);
             try {
@@ -643,7 +677,6 @@ class _TopNav extends ConsumerWidget {
         ),
       ))
         (_PosSection.items, 'إدارة الأصناف'),
-      (_PosSection.customers, 'العملاء'),
       (_PosSection.settings, 'الإعدادات'),
     ];
     final menuBadge = ref.watch(menuNewOrdersCountProvider);
@@ -1643,11 +1676,13 @@ class _SuccessOrderDialog extends StatelessWidget {
     required this.orderNumber,
     required this.onPrint,
     required this.onContinue,
+    this.tableOccupied = false,
   });
 
   final String orderNumber;
   final VoidCallback onPrint;
   final VoidCallback onContinue;
+  final bool tableOccupied;
 
   @override
   Widget build(BuildContext context) {
@@ -1680,10 +1715,12 @@ class _SuccessOrderDialog extends StatelessWidget {
               style: const TextStyle(color: HasimColors.muted),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'الفاتورة محفوظة في تبويب الفواتير حتى بدون طابعة.',
+            Text(
+              tableOccupied
+                  ? 'الفاتورة محفوظة في تبويب الفواتير، والطاولة أصبحت مشغولة فوراً.'
+                  : 'الفاتورة محفوظة في تبويب الفواتير حتى بدون طابعة.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: HasimColors.muted),
+              style: const TextStyle(fontSize: 12, color: HasimColors.muted),
             ),
             const SizedBox(height: 18),
             HsPrimaryButton(label: 'تم', onPressed: onContinue),

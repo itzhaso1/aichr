@@ -154,6 +154,7 @@ void main() {
     expect(find.text('الكاشير'), findsOneWidget);
     expect(find.text('الفواتير'), findsOneWidget);
     expect(find.text('التقارير'), findsOneWidget);
+    expect(find.text('العملاء'), findsNothing);
 
     await tester.tap(find.text('الفواتير'));
     await tester.pump();

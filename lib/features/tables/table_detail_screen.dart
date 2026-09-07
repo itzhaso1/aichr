@@ -18,6 +18,8 @@ import '../../core/util/json_numbers.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/theme/hasim_radius.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/occupied_duration_label.dart';
+import '../../core/util/occupied_duration.dart';
 import 'table_action_wizards.dart';
 import 'table_add_order_sheet.dart';
 import 'table_order_editor.dart';
@@ -226,6 +228,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -321,18 +324,6 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
       _loading = false;
       _error = 'الطاولة غير متاحة محليًا.';
     });
-  }
-
-  String _durationLabel() {
-    final opened = _detail?['opened_at'] as String?;
-    if (opened == null) return '—';
-    final at = DateTime.tryParse(opened);
-    if (at == null) return '—';
-    final d = DateTime.now().difference(at.toLocal());
-    final h = d.inHours.toString().padLeft(2, '0');
-    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
-    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
-    return '$h:$m:$s';
   }
 
   bool _isSyncingLocal(Map<String, dynamic> order) =>
@@ -457,6 +448,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             deviceId: deviceId,
             tableServerId: widget.tableId,
           );
+      ref.read(tablesRevisionProvider.notifier).state++;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم فتح جلسة الطاولة.')),
@@ -1099,6 +1091,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
           ? Map<String, dynamic>.from(closed['invoice'] as Map)
           : null;
       ref.read(invoicesRevisionProvider.notifier).state++;
+      ref.read(tablesRevisionProvider.notifier).state++;
       if (invoice != null) {
         await _afterCloseInvoiceDialog(invoice);
       } else {
@@ -1209,6 +1202,7 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             tableServerId: widget.tableId,
           );
       if (!mounted) return;
+      ref.read(tablesRevisionProvider.notifier).state++;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم إلغاء الطاولة محليًا.')),
       );
@@ -1223,6 +1217,9 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(tablesRevisionProvider, (prev, next) {
+      if (prev != next) _load();
+    });
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null || _detail == null) {
       return Padding(
@@ -1345,9 +1342,35 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
               asDoubleOr(_detail!['total']).toStringAsFixed(2),
               highlight: true,
             ),
-            _identityChip(
-              'الجلسة',
-              _hasSession ? 'مفتوحة · ${_durationLabel()}' : 'لا توجد جلسة',
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'الجلسة',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: HasimColors.muted,
+                  ),
+                ),
+                _hasSession
+                    ? OccupiedDurationLabel(
+                        openedAt: parseOpenedAt(_detail?['opened_at']),
+                        prefix: 'مفتوحة · ',
+                        placeholder: 'مفتوحة',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      )
+                    : const Text(
+                        'لا توجد جلسة',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ],
             ),
           ],
         ),
@@ -1415,12 +1438,17 @@ class _TableDetailScreenState extends ConsumerState<TableDetailScreen> {
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
-          Text(
-            _hasSession
-                ? 'جلسة مفتوحة · المدة ${_durationLabel()}'
-                : 'لا توجد جلسة نشطة',
-            style: const TextStyle(fontSize: 12, color: HasimColors.muted),
-          ),
+          _hasSession
+              ? OccupiedDurationLabel(
+                  openedAt: parseOpenedAt(_detail?['opened_at']),
+                  prefix: 'جلسة مفتوحة · المدة ',
+                  placeholder: 'جلسة مفتوحة',
+                  style: const TextStyle(fontSize: 12, color: HasimColors.muted),
+                )
+              : const Text(
+                  'لا توجد جلسة نشطة',
+                  style: TextStyle(fontSize: 12, color: HasimColors.muted),
+                ),
           if (_hasSession) ...[
             const SizedBox(height: 4),
             Text(

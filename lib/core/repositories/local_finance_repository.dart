@@ -27,22 +27,40 @@ class LocalFinanceRepository {
     bool fallbackAllWorkspaces = false,
   }) async {
     var rows = await _queryRows(workspaceId: workspaceId);
-    if (rows.isEmpty && fallbackAllWorkspaces) {
-      rows = await _queryRows();
-    }
     if (onDate != null) {
-      final day = [
+      var day = [
         for (final row in rows)
           if (_sameDay(row.createdAt, onDate)) row,
       ];
+      if (day.isEmpty && fallbackAllWorkspaces) {
+        rows = await _queryRows();
+        day = [
+          for (final row in rows)
+            if (_sameDay(row.createdAt, onDate)) row,
+        ];
+      }
       if (day.isNotEmpty) {
         return [for (final row in day) _invoiceToMap(row)];
       }
-      // Strict callers (daily reports) keep an empty day. The invoices tab
-      // passes [fallbackAllWorkspaces] so a timezone miss still shows sales.
       if (!fallbackAllWorkspaces) return const [];
+      if (rows.isEmpty) {
+        rows = await _queryRows();
+      }
+      return [for (final row in rows) _invoiceToMap(row)];
+    }
+    if (rows.isEmpty && fallbackAllWorkspaces) {
+      rows = await _queryRows();
     }
     return [for (final row in rows) _invoiceToMap(row)];
+  }
+
+  Stream<List<LocalInvoice>> watchInvoices({int? workspaceId}) {
+    final query = _db.select(_db.localInvoices)
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    if (workspaceId != null && workspaceId > 0) {
+      query.where((t) => t.workspaceId.equals(workspaceId));
+    }
+    return query.watch();
   }
 
   Future<Map<String, dynamic>?> getInvoice({
@@ -80,7 +98,32 @@ class LocalFinanceRepository {
     required int workspaceId,
     required DateTime date,
   }) async {
-    final invoices = await listInvoices(workspaceId: workspaceId, onDate: date);
+    final invoices = await listInvoices(
+      workspaceId: workspaceId,
+      onDate: date,
+    );
+    if (invoices.isEmpty) {
+      final allDay = await listInvoices(onDate: date);
+      if (allDay.isNotEmpty) {
+        return _reportFromInvoices(
+          workspaceId: workspaceId,
+          date: date,
+          invoices: allDay,
+        );
+      }
+    }
+    return _reportFromInvoices(
+      workspaceId: workspaceId,
+      date: date,
+      invoices: invoices,
+    );
+  }
+
+  Future<Map<String, dynamic>> _reportFromInvoices({
+    required int workspaceId,
+    required DateTime date,
+    required List<Map<String, dynamic>> invoices,
+  }) async {
     final orders = await (_db.select(_db.localOrders)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .get();

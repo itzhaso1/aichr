@@ -105,6 +105,9 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
         _load();
       }
     });
+    ref.listen<int>(invoicesRevisionProvider, (prev, next) {
+      if (prev != next) _load();
+    });
     ref.listen<Map<String, dynamic>>(cashierPermissionsProvider, (prev, next) {
       final wasDenied = !CashierPermissions.canViewReports(
         CashierPermissions.resolve(

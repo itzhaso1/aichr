@@ -22,40 +22,75 @@ class LocalReportsService {
 
     // Dart calendar-day filters only. SQL DateTime binds have stalled the
     // reports tab on "جاري تحميل التقرير…" in offline SQLite builds.
-    final invoices = await (_db.select(_db.localInvoices)
-          ..where((t) => t.workspaceId.equals(workspaceId))
+    final allInvoices = await (_db.select(_db.localInvoices)
           ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
         .get();
-    final dayInvoices = [
-      for (final row in invoices)
-        if (_sameCalendarDay(row.createdAt, date)) row,
+    final wsInvoices = [
+      for (final row in allInvoices)
+        if (row.workspaceId == workspaceId) row,
     ];
+    var dayInvoices = [
+      for (final row in wsInvoices)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayInvoices.isEmpty) {
+      dayInvoices = [
+        for (final row in allInvoices)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
-    final orders = await (_db.select(_db.localOrders)
-          ..where((t) => t.workspaceId.equals(workspaceId)))
-        .get();
-    final dayOrders = [
-      for (final row in orders)
-        if (_sameCalendarDay(row.createdAt, date) ||
-            _sameCalendarDay(row.updatedAt, date))
+    final allOrders = await _db.select(_db.localOrders).get();
+    final wsOrders = [
+      for (final row in allOrders)
+        if (row.workspaceId == workspaceId) row,
+    ];
+    var dayOrders = [
+      for (final row in wsOrders)
+        if (_invoiceOnBusinessDay(row.createdAt, date) ||
+            _invoiceOnBusinessDay(row.updatedAt, date))
           row,
     ];
+    if (dayOrders.isEmpty && dayInvoices.isNotEmpty) {
+      dayOrders = [
+        for (final row in allOrders)
+          if (_invoiceOnBusinessDay(row.createdAt, date) ||
+              _invoiceOnBusinessDay(row.updatedAt, date))
+            row,
+      ];
+    }
 
-    final payments = await (_db.select(_db.localPayments)
-          ..where((t) => t.workspaceId.equals(workspaceId)))
-        .get();
-    final dayPayments = [
-      for (final row in payments)
-        if (_sameCalendarDay(row.createdAt, date)) row,
+    final allPayments = await _db.select(_db.localPayments).get();
+    final wsPayments = [
+      for (final row in allPayments)
+        if (row.workspaceId == workspaceId) row,
     ];
+    var dayPayments = [
+      for (final row in wsPayments)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayPayments.isEmpty && dayInvoices.isNotEmpty) {
+      dayPayments = [
+        for (final row in allPayments)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
-    final returns = await (_db.select(_db.localReturns)
-          ..where((t) => t.workspaceId.equals(workspaceId)))
-        .get();
-    final dayReturns = [
-      for (final row in returns)
-        if (_sameCalendarDay(row.createdAt, date)) row,
+    final allReturns = await _db.select(_db.localReturns).get();
+    final wsReturns = [
+      for (final row in allReturns)
+        if (row.workspaceId == workspaceId) row,
     ];
+    var dayReturns = [
+      for (final row in wsReturns)
+        if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+    ];
+    if (dayReturns.isEmpty && dayInvoices.isNotEmpty) {
+      dayReturns = [
+        for (final row in allReturns)
+          if (_invoiceOnBusinessDay(row.createdAt, date)) row,
+      ];
+    }
 
     var invoicesCount = dayInvoices.length;
     var subtotalCents = dayInvoices.fold<int>(0, (s, r) => s + r.subtotal);
@@ -112,11 +147,7 @@ class LocalReportsService {
     final items = paidIds.isEmpty
         ? const <LocalOrderItem>[]
         : await (_db.select(_db.localOrderItems)
-              ..where(
-                (t) =>
-                    t.workspaceId.equals(workspaceId) &
-                    t.isRemoved.equals(false),
-              ))
+              ..where((t) => t.isRemoved.equals(false)))
             .get();
 
     var cogsCents = 0;
@@ -239,10 +270,15 @@ class LocalReportsService {
     }
   }
 
-  bool _sameCalendarDay(DateTime a, DateTime b) {
-    final la = a.toLocal();
-    final lb = b.toLocal();
-    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+  bool _invoiceOnBusinessDay(DateTime created, DateTime date) {
+    final la = created.toLocal();
+    final lb = date.toLocal();
+    if (la.year == lb.year && la.month == lb.month && la.day == lb.day) {
+      return true;
+    }
+    final ua = created.toUtc();
+    final ub = date.toUtc();
+    return ua.year == ub.year && ua.month == ub.month && ua.day == ub.day;
   }
 
   Future<Map<String, dynamic>> stockSnapshot(int workspaceId) async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -28,12 +30,31 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   DateTime? _dateFilter;
   Map<String, dynamic>? _selected;
   String? _workspaceName;
+  StreamSubscription? _watchSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (!mounted) return;
+      _subscribe();
+      _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _watchSub?.cancel();
+    super.dispose();
+  }
+
+  void _subscribe() {
+    _watchSub?.cancel();
+    _watchSub = ref
+        .read(localFinanceRepositoryProvider)
+        .watchInvoices()
+        .listen((_) {
+      if (mounted) _load(silent: true);
     });
   }
 
@@ -49,13 +70,15 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
       ? 'كل الفواتير'
       : DateFormat('yyyy-MM-dd').format(_dateFilter!);
 
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _selected = null;
-    });
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _selected = null;
+      });
+    }
     final workspaceId = ref.read(workspaceIdProvider);
     final finance = ref.read(localFinanceRepositoryProvider);
     final session = ref.read(authControllerProvider).valueOrNull;

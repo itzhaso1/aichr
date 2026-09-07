@@ -29,6 +29,7 @@ final checkoutServiceProvider = Provider<CheckoutService>((ref) {
     ref.watch(stockEngineProvider),
     ref.watch(documentNumberServiceProvider),
     ref.watch(syncQueueRepositoryProvider),
+    tables: ref.watch(tablesRepositoryProvider),
   );
 });
 

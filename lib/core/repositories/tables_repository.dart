@@ -317,7 +317,118 @@ class TablesRepository {
     return refreshed ?? nextPayload;
   }
 
+  /// Occupy a dining table after cashier checkout.
+  ///
+  /// The sale is already paid + invoiced; the table stays busy with a live
+  /// [opened_at] until [closeSessionLocal] frees it. Does not insert another
+  /// invoice.
+  Future<Map<String, dynamic>?> occupyFromCheckout({
+    required int workspaceId,
+    required String deviceId,
+    String? tableLocalId,
+    int? tableServerId,
+    required String invoiceLocalId,
+    required String invoiceNumber,
+    required double total,
+    List<Map<String, dynamic>> items = const [],
+  }) async {
+    if (workspaceId <= 0) return null;
+    final existing = await _findTable(
+      workspaceId,
+      localId: tableLocalId,
+      serverId: tableServerId,
+    );
+    if (existing == null) return null;
+
+    final payload = _safeMap(existing.payloadJson);
+    final existingClient = '${payload['session_client_id'] ?? ''}'.trim();
+    final existingOpened = '${payload['opened_at'] ?? ''}'.trim();
+    final alreadyOpen =
+        existing.status == 'occupied' && existingClient.isNotEmpty;
+    final sessionClientId = alreadyOpen ? existingClient : _newId();
+    final openedAt = alreadyOpen && existingOpened.isNotEmpty
+        ? payload['opened_at']
+        : DateTime.now().toUtc().toIso8601String();
+    final now = DateTime.now();
+    final sid = existing.serverId ?? tableServerId;
+    final orderSnapshot = [
+      for (final item in items)
+        {
+          'item_name':
+              item['item_name'] ?? item['name'] ?? item['product_name'],
+          'name': item['item_name'] ?? item['name'] ?? item['product_name'],
+          'quantity': item['quantity'] ?? 1,
+          'unit_price': item['unit_price'],
+          'total_amount': item['total_amount'] ?? item['total'],
+          'pos_status': 'completed',
+          'payment_status': 'paid',
+        },
+    ];
+    final nextPayload = {
+      ...payload,
+      if (sid != null) 'id': sid,
+      'status': 'occupied',
+      'session_open': true,
+      'session_client_id': sessionClientId,
+      'opened_at': openedAt,
+      'last_invoice_local_id': invoiceLocalId,
+      'last_invoice_number': invoiceNumber,
+      'last_sale_total': total,
+      'last_sale_items': items,
+      'total': total,
+      if (orderSnapshot.isNotEmpty) 'orders': orderSnapshot,
+    };
+
+    await _db.transaction(() async {
+      await (_db.update(_db.localTables)
+            ..where(
+              (t) =>
+                  t.localId.equals(existing.localId) &
+                  t.workspaceId.equals(workspaceId),
+            ))
+          .write(
+        LocalTablesCompanion(
+          status: const Value('occupied'),
+          payloadJson: Value(jsonEncode(nextPayload)),
+          updatedAt: Value(now),
+        ),
+      );
+      if (!alreadyOpen) {
+        await _queue.enqueue(
+          workspaceId: workspaceId,
+          deviceId: deviceId.trim(),
+          entityType: 'table_session',
+          entityId: existing.localId,
+          operation: 'open',
+          payload: {
+            if (sid != null) 'table_server_id': sid,
+            'table_local_id': existing.localId,
+            'session_client_id': sessionClientId,
+            'source': 'cashier_checkout',
+          },
+          clientReference: sessionClientId,
+        );
+      }
+    });
+
+    if (sid != null && sid > 0) {
+      return await getTable(workspaceId, sid) ?? nextPayload;
+    }
+    return nextPayload;
+  }
+
+  Stream<List<Map<String, dynamic>>> watchBoard(int workspaceId) {
+    return (_db.select(_db.localTables)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .watch()
+        .asyncMap((_) => listTables(workspaceId));
+  }
+
   /// Local-first close + payment + invoice draft. Queues sync; no online required.
+  ///
+  /// If the table was occupied by a cashier checkout (already invoiced, no
+  /// unpaid orders), this only frees the table — it does not write a second
+  /// empty invoice.
   Future<Map<String, dynamic>> closeSessionLocal({
     required int workspaceId,
     required String deviceId,
@@ -332,11 +443,45 @@ class TablesRepository {
     final payload = _safeMap(table.payloadJson);
     final sessionClientId = '${payload['session_client_id'] ?? _newId()}';
     final closeClientId = _newId();
-    final invoiceLocalId = _newId();
-    final paymentLocalId = _newId();
     final now = DateTime.now();
 
     final activeOrders = await _unpaidOrdersForTable(table);
+    if (activeOrders.isEmpty) {
+      await _db.transaction(() async {
+        await _freeTableRow(
+          workspaceId: workspaceId,
+          localId: localId,
+          tableServerId: tableServerId,
+          payload: payload,
+          now: now,
+        );
+        await _closeOpenLocalSessions(localId, now);
+        await _queue.enqueue(
+          workspaceId: workspaceId,
+          deviceId: deviceId.trim(),
+          entityType: 'table_session',
+          entityId: localId,
+          operation: 'close',
+          payload: {
+            'table_server_id': tableServerId,
+            'table_local_id': localId,
+            'session_server_id': table.sessionServerId,
+            'session_client_id': sessionClientId,
+            'payment_method': (paymentMethod ?? 'cash').trim(),
+            'freed_only': true,
+          },
+          clientReference: closeClientId,
+        );
+      });
+      return {
+        'invoice': null,
+        'freed_only': true,
+        'table': await getTable(workspaceId, tableServerId),
+      };
+    }
+
+    final invoiceLocalId = _newId();
+    final paymentLocalId = _newId();
 
     var subtotalCents = 0;
     var taxCents = 0;
@@ -385,21 +530,6 @@ class TablesRepository {
       'sync_status': 'pending',
     };
 
-    final nextTablePayload = {
-      ...payload,
-      'id': tableServerId,
-      'status': 'available',
-      'session_open': false,
-      'session_id': null,
-      'session_client_id': null,
-      'orders': const [],
-      'subtotal': 0,
-      'tax_amount': 0,
-      'discount_amount': 0,
-      'total': 0,
-      'last_local_invoice': invoicePayload,
-    };
-
     await _db.transaction(() async {
       await _db.into(_db.localInvoices).insert(
             LocalInvoicesCompanion.insert(
@@ -444,18 +574,15 @@ class TablesRepository {
           ),
         );
       }
-      await (_db.update(_db.localTables)
-            ..where((t) =>
-                t.localId.equals(localId) &
-                t.workspaceId.equals(workspaceId)))
-          .write(
-        LocalTablesCompanion(
-          status: const Value('available'),
-          sessionServerId: const Value(null),
-          payloadJson: Value(jsonEncode(nextTablePayload)),
-          updatedAt: Value(now),
-        ),
+      await _freeTableRow(
+        workspaceId: workspaceId,
+        localId: localId,
+        tableServerId: tableServerId,
+        payload: payload,
+        now: now,
+        lastInvoice: invoicePayload,
       );
+      await _closeOpenLocalSessions(localId, now);
       await _queue.enqueue(
         workspaceId: workspaceId,
         deviceId: deviceId.trim(),
@@ -481,6 +608,59 @@ class TablesRepository {
     };
   }
 
+  Future<void> _freeTableRow({
+    required int workspaceId,
+    required String localId,
+    required int tableServerId,
+    required Map<String, dynamic> payload,
+    required DateTime now,
+    Map<String, dynamic>? lastInvoice,
+  }) {
+    final nextTablePayload = {
+      ...payload,
+      'id': tableServerId,
+      'status': 'available',
+      'session_open': false,
+      'session_id': null,
+      'session_client_id': null,
+      'opened_at': null,
+      'orders': const [],
+      'subtotal': 0,
+      'tax_amount': 0,
+      'discount_amount': 0,
+      'total': 0,
+      if (lastInvoice != null) 'last_local_invoice': lastInvoice,
+    };
+    return (_db.update(_db.localTables)
+          ..where(
+            (t) =>
+                t.localId.equals(localId) & t.workspaceId.equals(workspaceId),
+          ))
+        .write(
+      LocalTablesCompanion(
+        status: const Value('available'),
+        sessionServerId: const Value(null),
+        payloadJson: Value(jsonEncode(nextTablePayload)),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  Future<void> _closeOpenLocalSessions(String tableLocalId, DateTime now) {
+    return (_db.update(_db.localSessions)
+          ..where(
+            (t) =>
+                t.tableLocalId.equals(tableLocalId) & t.status.equals('open'),
+          ))
+        .write(
+      LocalSessionsCompanion(
+        status: const Value('closed'),
+        closedAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
   /// Cancel session + unpaid orders locally (no network required).
   Future<void> cancelSessionLocal({
     required int workspaceId,
@@ -503,6 +683,7 @@ class TablesRepository {
       'session_open': false,
       'session_id': null,
       'session_client_id': null,
+      'opened_at': null,
       'orders': const [],
       'subtotal': 0,
       'tax_amount': 0,
@@ -534,6 +715,7 @@ class TablesRepository {
           updatedAt: Value(now),
         ),
       );
+      await _closeOpenLocalSessions(localId, now);
       await _queue.enqueue(
         workspaceId: workspaceId,
         deviceId: deviceId.trim(),
@@ -1043,6 +1225,11 @@ class TablesRepository {
     }
   }
 
+  bool _payloadSessionOpen(Map<String, dynamic> payload) {
+    if (payload['session_open'] == true) return true;
+    return '${payload['session_client_id'] ?? ''}'.trim().isNotEmpty;
+  }
+
   Map<String, dynamic> _rowToBoardMap(
     LocalTable row, {
     List<LocalOrder> unpaidOrders = const [],
@@ -1050,22 +1237,32 @@ class TablesRepository {
     final payload = _safeMap(row.payloadJson);
     final totalCents =
         unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
-    final occupied = unpaidOrders.isNotEmpty || row.status == 'occupied';
+    final occupied = unpaidOrders.isNotEmpty ||
+        row.status == 'occupied' ||
+        _payloadSessionOpen(payload);
+    final sessionClientId = '${payload['session_client_id'] ?? ''}'.trim();
+    final lastSale = asDouble(payload['last_sale_total'] ?? payload['total']);
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name,
-      'status': occupied ? 'occupied' : row.status,
+      'status': occupied ? 'occupied' : 'available',
       'capacity': row.capacity,
-      'session_id': row.sessionServerId ?? payload['session_id'],
-      'session_client_id': payload['session_client_id'],
+      'session_id': row.sessionServerId ??
+          payload['session_id'] ??
+          (sessionClientId.isEmpty ? null : sessionClientId),
+      'session_client_id':
+          sessionClientId.isEmpty ? payload['session_client_id'] : sessionClientId,
+      'session_open': occupied,
+      'opened_at': payload['opened_at'],
       'workspace_id': row.workspaceId,
       if (unpaidOrders.isNotEmpty) ...{
         'orders_count': unpaidOrders.length,
         'open_orders_count': unpaidOrders.length,
         'total': Money.fromCents(totalCents),
-      },
+      } else if (occupied && lastSale != null && lastSale > 0)
+        'total': lastSale,
     };
   }
 
@@ -1078,23 +1275,30 @@ class TablesRepository {
         unpaidOrders.fold<int>(0, (sum, order) => sum + order.totalAmount);
     final occupied = unpaidOrders.isNotEmpty ||
         row.status == 'occupied' ||
-        payload['session_open'] == true;
+        _payloadSessionOpen(payload);
+    final sessionClientId = '${payload['session_client_id'] ?? ''}'.trim();
+    final lastSale = asDouble(payload['last_sale_total'] ?? payload['total']);
     return {
       ...payload,
       'id': row.serverId ?? row.localId,
       'local_id': row.localId,
       'name': row.name.isNotEmpty ? row.name : '${payload['name'] ?? ''}',
-      'status': occupied ? 'occupied' : row.status,
+      'status': occupied ? 'occupied' : 'available',
       'capacity': row.capacity ?? payload['capacity'],
-      'session_id': row.sessionServerId ?? payload['session_id'],
-      'session_client_id': payload['session_client_id'],
+      'session_id': row.sessionServerId ??
+          payload['session_id'] ??
+          (sessionClientId.isEmpty ? null : sessionClientId),
+      'session_client_id':
+          sessionClientId.isEmpty ? payload['session_client_id'] : sessionClientId,
+      'session_open': occupied,
+      'opened_at': payload['opened_at'],
       'workspace_id': row.workspaceId,
       if (unpaidOrders.isNotEmpty) ...{
-        'session_open': true,
         'orders_count': unpaidOrders.length,
         'open_orders_count': unpaidOrders.length,
         'total': payload['total'] ?? Money.fromCents(totalCents),
-      },
+      } else if (occupied && lastSale != null && lastSale > 0)
+        'total': lastSale,
       'orders': payload['orders'] ?? const [],
     };
   }
