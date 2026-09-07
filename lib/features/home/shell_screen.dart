@@ -26,6 +26,7 @@ import '../admin/admin_placeholders.dart';
 import '../admin/users_admin_panel.dart';
 import '../cart/cart_controller.dart';
 import '../invoices/invoices_list.dart';
+import '../kitchen/kitchen_board.dart';
 import '../orders/menu_orders_feed.dart';
 import '../orders/orders_list.dart';
 import '../reports/daily_reports_panel.dart';
@@ -41,6 +42,7 @@ enum _PosSection {
   invoices,
   customers,
   items,
+  kitchen,
   reports,
   users,
   settings,
@@ -163,7 +165,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
           PosShellTab.tables => _PosSection.tables,
           PosShellTab.orders => _PosSection.orders,
           PosShellTab.menu => _PosSection.menu,
-          PosShellTab.kitchen => _PosSection.cashier,
+          PosShellTab.kitchen => _PosSection.kitchen,
           PosShellTab.invoices => _PosSection.invoices,
           PosShellTab.customers => _PosSection.cashier,
           PosShellTab.items => _PosSection.items,
@@ -200,22 +202,6 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
             onLogout: () async {
               await ref.read(authControllerProvider.notifier).logout();
               if (context.mounted) context.go('/login');
-            },
-            onReports: () {
-              final router = GoRouter.maybeOf(context);
-              if (router != null) {
-                context.go('/reports');
-              } else {
-                setState(() => _section = _PosSection.reports);
-              }
-            },
-            onKitchen: () {
-              final router = GoRouter.maybeOf(context);
-              if (router != null) {
-                context.go('/kitchen');
-              } else {
-                setState(() => _section = _PosSection.orders);
-              }
             },
           ),
           _TopNav(
@@ -275,6 +261,7 @@ class _ShellScreenState extends ConsumerState<ShellScreen> {
       _PosSection.invoices => const InvoicesList(),
       _PosSection.customers => const SizedBox.shrink(),
       _PosSection.items => const ItemsAdminPanel(),
+      _PosSection.kitchen => const KitchenBoard(),
       _PosSection.reports => const DailyReportsPanel(),
       _PosSection.users => const UsersAdminPanel(),
       _PosSection.settings => const SettingsPanel(),
@@ -513,15 +500,11 @@ class _TopHeader extends ConsumerWidget {
   const _TopHeader({
     required this.workspaceName,
     required this.onLogout,
-    required this.onReports,
-    required this.onKitchen,
     this.onCart,
   });
 
   final String workspaceName;
   final VoidCallback onLogout;
-  final VoidCallback onReports;
-  final VoidCallback onKitchen;
   final VoidCallback? onCart;
 
   @override
@@ -583,7 +566,6 @@ class _TopHeader extends ConsumerWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      ..._headerShortcuts(ref),
                       if (onCart != null)
                         PosTap(
                           onTap: onCart,
@@ -646,45 +628,6 @@ class _TopHeader extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  List<Widget> _headerShortcuts(WidgetRef ref) {
-    final perms = CashierPermissions.resolve(
-      ref.watch(cashierPermissionsProvider),
-      ref.watch(authControllerProvider).valueOrNull?.permissions,
-    );
-    return [
-      if (CashierPermissions.canViewReports(perms))
-        PosTap(
-          onTap: onReports,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Text(
-              'التقارير',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                color: HasimColors.brand,
-              ),
-            ),
-          ),
-        ),
-      if (CashierPermissions.canUseKitchen(perms))
-        PosTap(
-          onTap: onKitchen,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Text(
-              'المطبخ',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                color: HasimColors.brand,
-              ),
-            ),
-          ),
-        ),
-    ];
   }
 }
 

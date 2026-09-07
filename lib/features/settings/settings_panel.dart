@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api/cashier_api.dart';
 import '../../core/audio/menu_sound_service.dart';
@@ -612,6 +613,18 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ref.watch(authControllerProvider).valueOrNull?.permissions,
       ),
     );
+    final canViewReports = CashierPermissions.canViewReports(
+      CashierPermissions.resolve(
+        ref.watch(cashierPermissionsProvider),
+        ref.watch(authControllerProvider).valueOrNull?.permissions,
+      ),
+    );
+    final canUseKitchen = CashierPermissions.canUseKitchen(
+      CashierPermissions.resolve(
+        ref.watch(cashierPermissionsProvider),
+        ref.watch(authControllerProvider).valueOrNull?.permissions,
+      ),
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -621,6 +634,53 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 12),
+        if (canViewReports || canUseKitchen) ...[
+          HsCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'محطات العمل',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'التقارير والمطبخ صفحتان مستقلتان. صلاحية الدخول تُحدد لكل مستخدم من تبويب المستخدمون.',
+                  style: TextStyle(fontSize: 12, color: HasimColors.muted),
+                ),
+                if (canViewReports) ...[
+                  const SizedBox(height: 8),
+                  HsOutlineButton(
+                    label: 'فتح التقارير',
+                    onPressed: () {
+                      final router = GoRouter.maybeOf(context);
+                      if (router != null) {
+                        context.go('/reports');
+                      } else {
+                        requestPosShellTab(ref, PosShellTab.reports);
+                      }
+                    },
+                  ),
+                ],
+                if (canUseKitchen) ...[
+                  const SizedBox(height: 8),
+                  HsOutlineButton(
+                    label: 'فتح المطبخ',
+                    onPressed: () {
+                      final router = GoRouter.maybeOf(context);
+                      if (router != null) {
+                        context.go('/kitchen');
+                      } else {
+                        requestPosShellTab(ref, PosShellTab.kitchen);
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         HsCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

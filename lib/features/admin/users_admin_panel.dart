@@ -14,6 +14,7 @@ import '../../core/pos/application/pos_providers.dart';
 import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 /// Admin directory of cashiers/chefs with per-user permission checkboxes.
 class UsersAdminPanel extends ConsumerStatefulWidget {
@@ -52,8 +53,13 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
   }
 
   Future<void> _load() async {
-    final workspaceId = ref.read(workspaceIdProvider);
+    var workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) {
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      workspaceId = store?.workspaceId;
+    }
+    if (workspaceId == null || workspaceId <= 0) {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = 'لا توجد مساحة عمل محلية.';
@@ -61,10 +67,12 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
       });
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (_users.isEmpty) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final auth = ref.read(localAuthServiceProvider);
       final users = await auth.listUsers(workspaceId);
@@ -309,7 +317,9 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
     final canManage = CashierPermissions.canManageUsers(
       CashierPermissions.resolve(
         ref.watch(cashierPermissionsProvider),
-        ref.watch(authControllerProvider).valueOrNull?.permissions,
+        ref.watch(
+          authControllerProvider.select((s) => s.valueOrNull?.permissions),
+        ),
       ),
     );
     if (!canManage) {
@@ -337,29 +347,11 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
     }
 
     final selected = _selected;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 880;
-        final list = _usersList(selected);
-        final editor = selected == null
-            ? const Padding(
-                padding: EdgeInsets.all(16),
-                child: HsEmpty(title: 'اختر مستخدماً لعرض صلاحياته.'),
-              )
-            : _permissionEditor(selected);
-        if (!wide) {
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _header(),
-              const SizedBox(height: 12),
-              list,
-              const SizedBox(height: 12),
-              SizedBox(height: 520, child: editor),
-            ],
-          );
-        }
-        return Padding(
+    final wide = MediaQuery.sizeOf(context).width >= 880;
+    return SizedBox.expand(
+      child: ColoredBox(
+        color: HasimColors.page,
+        child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -367,19 +359,28 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
               _header(),
               const SizedBox(height: 12),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    SizedBox(width: 320, child: list),
-                    const SizedBox(width: 12),
-                    Expanded(child: editor),
-                  ],
-                ),
+                child: wide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(width: 320, child: _usersList(selected)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _permissionPane(selected)),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(flex: 2, child: _usersList(selected)),
+                          const SizedBox(height: 12),
+                          Expanded(flex: 3, child: _permissionPane(selected)),
+                        ],
+                      ),
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -388,6 +389,7 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
       children: [
         const Expanded(
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
@@ -402,10 +404,10 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
             ],
           ),
         ),
-        FilledButton.icon(
-          onPressed: _createUser,
-          icon: const Icon(Icons.person_add_alt_1, size: 18),
-          label: const Text('مستخدم جديد'),
+        HsActionChip(
+          label: 'مستخدم جديد',
+          icon: Icons.person_add_alt_1,
+          onTap: _createUser,
         ),
       ],
     );
@@ -413,30 +415,90 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
 
   Widget _usersList(LocalUser? selected) {
     return HsCard(
+      padding: EdgeInsets.zero,
       child: _users.isEmpty
-          ? const HsEmpty(title: 'لا يوجد مستخدمون بعد.')
-          : ListView(
-              shrinkWrap: true,
-              children: [
-                for (final user in _users)
-                  ListTile(
-                    selected: user.localId == selected?.localId,
-                    title: Text(user.name),
-                    subtitle: Text(
-                      '${user.username} · ${LocalAuthService.roleLabelAr(user.role)}',
+          ? const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'لا يوجد مستخدمون بعد.',
+                style: TextStyle(color: HasimColors.muted),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(8),
+              itemCount: _users.length,
+              itemBuilder: (context, index) {
+                final user = _users[index];
+                final active = user.localId == selected?.localId;
+                return PosTap(
+                  onTap: () => unawaited(_select(user)),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: active
+                          ? HasimColors.brandSoft
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    trailing: HsBadge(
-                      label: LocalAuthService.roleLabelAr(user.role),
-                      background: LocalAuthService.isKitchenRole(user.role)
-                          ? HasimColors.warningSoft
-                          : HasimColors.navIdleBg,
-                      foreground: HasimColors.ink,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  user.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  user.username,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: HasimColors.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          HsBadge(
+                            label: LocalAuthService.roleLabelAr(user.role),
+                            background: LocalAuthService.isKitchenRole(user.role)
+                                ? HasimColors.warningSoft
+                                : HasimColors.navIdleBg,
+                            foreground: HasimColors.ink,
+                          ),
+                        ],
+                      ),
                     ),
-                    onTap: () => unawaited(_select(user)),
                   ),
-              ],
+                );
+              },
             ),
     );
+  }
+
+  Widget _permissionPane(LocalUser? selected) {
+    if (selected == null) {
+      return const HsCard(
+        child: Text(
+          'اختر مستخدماً لعرض صلاحياته.',
+          style: TextStyle(color: HasimColors.muted),
+        ),
+      );
+    }
+    return _permissionEditor(selected);
   }
 
   Widget _permissionEditor(LocalUser user) {
@@ -446,54 +508,66 @@ class _UsersAdminPanelState extends ConsumerState<UsersAdminPanel> {
       groups.putIfAbsent(item.group, () => []).add(item);
     }
     return HsCard(
-      child: ListView(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            user.name,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
-          ),
-          Text(
-            '${user.username} · ${LocalAuthService.roleLabelAr(user.role)}',
-            style: const TextStyle(fontSize: 12, color: HasimColors.muted),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: OutlinedButton(
-              onPressed: () => unawaited(_resetPassword(user)),
-              child: const Text('تغيير كلمة المرور'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  user.name,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  '${user.username} · ${LocalAuthService.roleLabelAr(user.role)}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: HasimColors.muted,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                HsActionChip(
+                  label: 'تغيير كلمة المرور',
+                  onTap: () => unawaited(_resetPassword(user)),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          for (final entry in groups.entries) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 4),
-              child: Text(
-                entry.key,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                for (final entry in groups.entries) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 4),
+                    child: Text(
+                      entry.key,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  for (final item in entry.value)
+                    HsCheckRow(
+                      label: item.labelAr,
+                      value: _flags[item.key] == true,
+                      onChanged: (v) {
+                        setState(() => _flags[item.key] = v);
+                      },
+                    ),
+                ],
+                const SizedBox(height: 8),
+                HsPrimaryButton(
+                  label: _saving ? 'جاري الحفظ…' : 'حفظ الصلاحيات',
+                  onPressed: _saving ? null : _saveAcl,
+                  loading: _saving,
+                ),
+              ],
             ),
-            for (final item in entry.value)
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                value: _flags[item.key] == true,
-                title: Text(item.labelAr, style: const TextStyle(fontSize: 13)),
-                onChanged: (v) {
-                  setState(() => _flags[item.key] = v == true);
-                },
-              ),
-          ],
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: _saving ? null : _saveAcl,
-            child: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('حفظ الصلاحيات'),
           ),
         ],
       ),

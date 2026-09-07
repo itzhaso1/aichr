@@ -108,12 +108,6 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
       final store = await ref.read(localAuthServiceProvider).anyStore();
       resolvedWorkspace = store?.workspaceId;
-      if (resolvedWorkspace != null &&
-          resolvedWorkspace > 0 &&
-          mounted &&
-          ref.read(workspaceIdProvider) != resolvedWorkspace) {
-        ref.read(workspaceIdProvider.notifier).state = resolvedWorkspace;
-      }
     }
     if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
       if (!mounted) return;
@@ -243,7 +237,9 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       }
     }
 
-    return ColoredBox(color: HasimColors.page, child: body);
+    return SizedBox.expand(
+      child: ColoredBox(color: HasimColors.page, child: body),
+    );
   }
 
   Widget _buildReportBody() {
@@ -269,6 +265,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             children: [
               const Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -556,78 +553,61 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       ),
     ];
 
-    return LayoutBuilder(
-      builder: (context, c) {
-        var maxW = c.maxWidth;
-        if (!maxW.isFinite || maxW <= 0) {
-          maxW = MediaQuery.sizeOf(context).width - 32;
-        }
-        if (!maxW.isFinite || maxW <= 0) maxW = 360;
-        final cols = maxW >= 900
-            ? 4
-            : maxW >= 520
-            ? 2
-            : 1;
-        final width = cols == 1 ? maxW : (maxW - (8 * (cols - 1))) / cols;
-        final cardW = width.isFinite && width >= 8 ? width : maxW;
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final card in cards)
-              SizedBox(
-                width: cardW,
-                child: HsCard(
-                  color: card.$4
-                      ? const Color(0xFFECFDF5)
-                      : HasimColors.surface,
-                  borderColor: card.$4
-                      ? const Color(0xFFA7F3D0)
-                      : HasimColors.border,
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        card.$1,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: card.$4
-                              ? HasimColors.ctaDark
-                              : HasimColors.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${card.$2}',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: card.$4
-                              ? const Color(0xFF065F46)
-                              : HasimColors.ink,
-                        ),
-                      ),
-                      Text(
-                        'مفتوحة الآن: ${card.$3}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: card.$4
-                              ? HasimColors.ctaDark
-                              : HasimColors.muted,
-                        ),
-                      ),
-                    ],
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final card in cards)
+          SizedBox(
+            width: 240,
+            child: HsCard(
+              color: card.$4 ? const Color(0xFFECFDF5) : HasimColors.surface,
+              borderColor: card.$4
+                  ? const Color(0xFFA7F3D0)
+                  : HasimColors.border,
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card.$1,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: card.$4
+                          ? HasimColors.ctaDark
+                          : HasimColors.muted,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${card.$2}',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: card.$4
+                          ? const Color(0xFF065F46)
+                          : HasimColors.ink,
+                    ),
+                  ),
+                  Text(
+                    'مفتوحة الآن: ${card.$3}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: card.$4
+                          ? HasimColors.ctaDark
+                          : HasimColors.muted,
+                    ),
+                  ),
+                ],
               ),
-          ],
-        );
-      },
+            ),
+          ),
+      ],
     );
   }
 

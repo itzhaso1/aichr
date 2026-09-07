@@ -274,11 +274,17 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Widget build(BuildContext context) {
     ref.listen<int?>(workspaceIdProvider, (prev, next) {
       if (next != prev && next != null && next > 0) {
-        _load();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_load(silent: true));
+        });
       }
     });
     ref.listen<int>(invoicesRevisionProvider, (prev, next) {
-      if (prev != next) _load(silent: true);
+      if (prev != next) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_load(silent: true));
+        });
+      }
     });
     try {
       return _buildBody();
@@ -457,18 +463,18 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.calendar_today, size: 16),
-                label: Text(_dateQuery),
+              HsActionChip(
+                label: _dateQuery,
+                icon: Icons.calendar_today,
+                onTap: _pickDate,
               ),
               if (_dateFilter != null)
-                TextButton(
-                  onPressed: () async {
+                HsActionChip(
+                  label: 'الكل',
+                  onTap: () async {
                     setState(() => _dateFilter = null);
                     await _load();
                   },
-                  child: const Text('الكل'),
                 ),
             ],
           ),
@@ -505,9 +511,12 @@ class _InvoiceDetail extends StatelessWidget {
       children: [
         Row(
           children: [
-            IconButton(
-              onPressed: onBack,
-              icon: const Icon(Icons.arrow_forward),
+            PosTap(
+              onTap: onBack,
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.arrow_forward),
+              ),
             ),
             Expanded(
               child: Text(
@@ -526,14 +535,15 @@ class _InvoiceDetail extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            OutlinedButton(onPressed: onPrint, child: const Text('طباعة')),
-            OutlinedButton(onPressed: onReprint, child: const Text('إعادة')),
+            HsActionChip(label: 'طباعة', onTap: onPrint),
+            HsActionChip(label: 'إعادة', onTap: onReprint),
             if (onEdit != null)
-              OutlinedButton(onPressed: onEdit, child: const Text('تعديل')),
+              HsActionChip(label: 'تعديل', onTap: onEdit!),
             if (onDelete != null)
-              OutlinedButton(
-                onPressed: onDelete,
-                child: const Text('حذف'),
+              HsActionChip(
+                label: 'حذف',
+                color: HasimColors.danger,
+                onTap: onDelete!,
               ),
           ],
         ),

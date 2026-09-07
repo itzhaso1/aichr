@@ -420,77 +420,66 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'الطاولات',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                    ),
-                    Text(
-                      'اضغط على الطاولة للدخول إلى تفاصيلها وعملياتها',
-                      style: TextStyle(fontSize: 11, color: HasimColors.muted),
-                    ),
-                  ],
-                ),
+              const Text(
+                'الطاولات',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (CashierPermissions.canCreateTables(_perms))
-                        PosTap(
-                          onTap: _addTable,
-                          child: const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.add, color: HasimColors.brand),
-                                SizedBox(width: 4),
-                                Text(
-                                  'إضافة طاولة',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    color: HasimColors.brand,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      if (CashierPermissions.canEditTables(_perms) ||
-                          CashierPermissions.canDeleteTables(_perms))
-                        PosTap(
-                          onTap: _manageTables,
-                          child: const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'إدارة',
+              const Text(
+                'اضغط على الطاولة للدخول إلى تفاصيلها وعملياتها',
+                style: TextStyle(fontSize: 11, color: HasimColors.muted),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  if (CashierPermissions.canCreateTables(_perms))
+                    PosTap(
+                      onTap: _addTable,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add, color: HasimColors.brand),
+                            SizedBox(width: 4),
+                            Text(
+                              'إضافة طاولة',
                               style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                color: HasimColors.ink,
+                                color: HasimColors.brand,
                               ),
                             ),
-                          ),
-                        ),
-                      PosTap(
-                        onTap: _load,
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Icon(Icons.refresh),
+                          ],
                         ),
                       ),
-                    ],
+                    ),
+                  if (CashierPermissions.canEditTables(_perms) ||
+                      CashierPermissions.canDeleteTables(_perms))
+                    PosTap(
+                      onTap: _manageTables,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text(
+                          'إدارة',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: HasimColors.ink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  PosTap(
+                    onTap: _load,
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.refresh),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),

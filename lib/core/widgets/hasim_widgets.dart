@@ -172,6 +172,118 @@ class HsTextAction extends StatelessWidget {
   }
 }
 
+/// Compact action without Material [InkWell] / [MouseRegion].
+class HsActionChip extends StatelessWidget {
+  const HsActionChip({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.selected = false,
+    this.color,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final bool selected;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = color ?? (selected ? HasimColors.ctaDark : HasimColors.ink);
+    return PosTap(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.ctaSoft : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.sm),
+            border: Border.all(
+              color: selected ? HasimColors.cta : HasimColors.border,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: fg),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: fg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Checkbox row without Material [CheckboxListTile] mouse annotations.
+class HsCheckRow extends StatelessWidget {
+  const HsCheckRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PosTap(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: value ? HasimColors.cta : HasimColors.surface,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color: value ? HasimColors.cta : HasimColors.border,
+                ),
+              ),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: value
+                    ? const Icon(Icons.check, size: 14, color: Colors.white)
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class HsEmpty extends StatelessWidget {
   const HsEmpty({
     super.key,

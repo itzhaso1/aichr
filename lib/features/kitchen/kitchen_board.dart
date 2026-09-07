@@ -57,9 +57,6 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
     if (workspaceId == null || workspaceId <= 0) {
       final store = await ref.read(localAuthServiceProvider).anyStore();
       workspaceId = store?.workspaceId;
-      if (workspaceId != null && mounted) {
-        ref.read(workspaceIdProvider.notifier).state = workspaceId;
-      }
     }
     if (!mounted) return;
     if (workspaceId == null || workspaceId <= 0) {
@@ -259,40 +256,24 @@ class _KitchenBoardState extends ConsumerState<KitchenBoard> {
             ),
           ],
           const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: HasimColors.border),
-              borderRadius: BorderRadius.circular(HasimRadius.sm),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                isExpanded: true,
-                value: _statusOptions.contains(current) ? current : 'new',
-                items: [
-                  for (final s in _statusOptions)
-                    DropdownMenuItem(
-                      value: s,
-                      child: Text(
-                        PosLabels.status(s),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: PosLabels.statusColor(s),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                ],
-                onChanged: (v) {
-                  final localId =
-                      order['local_id'] as String? ?? order['id']?.toString();
-                  if (v != null && localId != null && localId.isNotEmpty) {
-                    unawaited(_updateStatus(localId, v));
-                  }
-                },
-              ),
-            ),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final s in _statusOptions)
+                HsActionChip(
+                  label: PosLabels.status(s),
+                  selected: s == current,
+                  color: PosLabels.statusColor(s),
+                  onTap: () {
+                    final localId =
+                        order['local_id'] as String? ?? order['id']?.toString();
+                    if (localId != null && localId.isNotEmpty) {
+                      unawaited(_updateStatus(localId, s));
+                    }
+                  },
+                ),
+            ],
           ),
         ],
       ),
