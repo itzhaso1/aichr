@@ -692,7 +692,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     return HsCard(
       color: HasimColors.ctaDark,
       borderColor: HasimColors.ctaDark,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
           Container(
@@ -883,19 +883,33 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           ? 'تُحفظ محلياً على هذا الجهاز (بدون خادم)'
           : 'عرض فقط — تحتاج menu.manage للتعديل',
       children: [
-        TextField(
-          controller: _tax,
-          enabled: canManage && _ready && !_savingPos,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'نسبة الضريبة %',
-            isDense: true,
-          ),
-        ),
-        TextField(
-          controller: _currency,
-          enabled: canManage && _ready && !_savingPos,
-          decoration: const InputDecoration(labelText: 'العملة', isDense: true),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _tax,
+                enabled: canManage && _ready && !_savingPos,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'نسبة الضريبة %',
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _currency,
+                enabled: canManage && _ready && !_savingPos,
+                decoration: const InputDecoration(
+                  labelText: 'العملة',
+                  isDense: true,
+                ),
+              ),
+            ),
+          ],
         ),
         HsToggleRow(
           label: 'صوت طلبات المنيو',
