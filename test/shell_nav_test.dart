@@ -409,7 +409,7 @@ void main() {
       reason: 'checkout did not persist an invoice. snackbars=$snackTexts',
     );
     expect(
-      find.text('تم حفظ الفاتورة'),
+      find.text('تم حفظ الفاتورة بنجاح'),
       findsOneWidget,
       reason: 'snackbars=$snackTexts invoiceCount=${invoices.length}',
     );
@@ -419,7 +419,7 @@ void main() {
     expect(table.status, 'occupied');
     expect(table.payloadJson.contains('opened_at'), isTrue);
 
-    await tester.tap(find.text('تم'));
+    await tester.tap(find.widgetWithText(HsOutlineButton, 'إغلاق'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -563,6 +563,8 @@ void main() {
     expect(find.byType(HsSoftGrid), findsWidgets);
     expect(find.text('فتح التقارير'), findsOneWidget);
     expect(find.text('فتح المطبخ'), findsOneWidget);
+    expect(find.text('افتتاح الكاش'), findsWidgets);
+    expect(find.text('إغلاق الكاش'), findsOneWidget);
 
     await tester.ensureVisible(find.text('فتح التقارير'));
     await tester.tap(find.text('فتح التقارير'));
