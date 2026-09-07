@@ -42,6 +42,51 @@ class HsCard extends StatelessWidget {
   }
 }
 
+/// Responsive tile wrap. Uses bounded width only (ListView gives finite
+/// [maxWidth] even when [maxHeight] is unbounded).
+class HsSoftGrid extends StatelessWidget {
+  const HsSoftGrid({
+    super.key,
+    required this.children,
+    this.horizontalInset = 32,
+    this.spacing = 8,
+    this.minTileWidth = 280,
+    this.maxColumns = 3,
+  });
+
+  final List<Widget> children;
+  final double horizontalInset;
+  final double spacing;
+  final double minTileWidth;
+  final int maxColumns;
+
+  @override
+  Widget build(BuildContext context) {
+    if (children.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, c) {
+        var maxW = c.maxWidth;
+        if (!maxW.isFinite || maxW < 8) {
+          maxW = MediaQuery.sizeOf(context).width - horizontalInset;
+        }
+        if (!maxW.isFinite || maxW < 8) maxW = 360;
+        var cols = (maxW / minTileWidth).floor();
+        if (cols < 1) cols = 1;
+        if (cols > maxColumns) cols = maxColumns;
+        final tileW = cols == 1 ? maxW : (maxW - spacing * (cols - 1)) / cols;
+        final width = tileW.isFinite && tileW >= 8 ? tileW : maxW;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final child in children) SizedBox(width: width, child: child),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class HsPrimaryButton extends StatelessWidget {
   const HsPrimaryButton({
     super.key,
@@ -128,6 +173,248 @@ class HsOutlineButton extends StatelessWidget {
   }
 }
 
+/// App-bar / header text action without Material [InkWell] / [MouseRegion].
+class HsTextAction extends StatelessWidget {
+  const HsTextAction({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.color = HasimColors.brand,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Text(
+      label,
+      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: color),
+    );
+    return PosTap(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: icon == null
+            ? text
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 18, color: color),
+                  const SizedBox(width: 6),
+                  text,
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// Compact action without Material [InkWell] / [MouseRegion].
+class HsActionChip extends StatelessWidget {
+  const HsActionChip({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.selected = false,
+    this.color,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final bool selected;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = color ?? (selected ? HasimColors.ctaDark : HasimColors.ink);
+    return PosTap(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: selected ? HasimColors.ctaSoft : HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.sm),
+            border: Border.all(
+              color: selected ? HasimColors.cta : HasimColors.border,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: fg),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: fg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Closed select field that opens a compact dialog (no Material dropdown).
+class HsSelectField extends StatelessWidget {
+  const HsSelectField({
+    super.key,
+    required this.valueLabel,
+    required this.options,
+    required this.onSelected,
+  });
+
+  final String valueLabel;
+  final List<({String value, String label})> options;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return PosTap(
+      onTap: () async {
+        final picked = await showDialog<String>(
+          context: context,
+          builder: (ctx) => Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 48,
+              vertical: 24,
+            ),
+            backgroundColor: HasimColors.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(HasimRadius.md),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360, maxHeight: 360),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  for (final opt in options)
+                    PosTap(
+                      onTap: () => Navigator.pop(ctx, opt.value),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            opt.label,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+        if (picked != null) onSelected(picked);
+      },
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 36),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: HasimColors.surface,
+            borderRadius: BorderRadius.circular(HasimRadius.sm),
+            border: Border.all(color: HasimColors.border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  valueLabel,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: HasimColors.ink,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.arrow_drop_down, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Checkbox row without Material [CheckboxListTile] mouse annotations.
+class HsCheckRow extends StatelessWidget {
+  const HsCheckRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PosTap(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: value ? HasimColors.cta : HasimColors.surface,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color: value ? HasimColors.cta : HasimColors.border,
+                ),
+              ),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: value
+                    ? const Icon(Icons.check, size: 14, color: Colors.white)
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class HsEmpty extends StatelessWidget {
   const HsEmpty({
     super.key,
@@ -193,16 +480,16 @@ class HsBadge extends StatelessWidget {
   final Color foreground;
 
   factory HsBadge.occupied(String label) => HsBadge(
-        label: label,
-        background: HasimColors.occupiedSoft,
-        foreground: HasimColors.occupied,
-      );
+    label: label,
+    background: HasimColors.occupiedSoft,
+    foreground: HasimColors.occupied,
+  );
 
   factory HsBadge.available(String label) => HsBadge(
-        label: label,
-        background: HasimColors.availableSoft,
-        foreground: HasimColors.available,
-      );
+    label: label,
+    background: HasimColors.availableSoft,
+    foreground: HasimColors.available,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -351,7 +638,8 @@ class ProductCard extends StatelessWidget {
       builder: (context, constraints) {
         final w = constraints.maxWidth;
         final h = constraints.maxHeight;
-        final bounded = constraints.hasBoundedWidth &&
+        final bounded =
+            constraints.hasBoundedWidth &&
             constraints.hasBoundedHeight &&
             w.isFinite &&
             h.isFinite &&
@@ -508,11 +796,7 @@ Widget _productImage(String? path) {
 }
 
 class LocalProductImage extends StatelessWidget {
-  const LocalProductImage({
-    super.key,
-    required this.path,
-    this.size = 44,
-  });
+  const LocalProductImage({super.key, required this.path, this.size = 44});
 
   final String? path;
   final double size;
@@ -564,11 +848,11 @@ class ConnectionBanner extends StatelessWidget {
     };
     final detail = offline
         ? (waiting > 0
-            ? '$waiting عمليات بانتظار المزامنة'
-            : 'الكاشير يعمل محلياً — المزامنة عند عودة الإنترنت')
+              ? '$waiting عمليات بانتظار المزامنة'
+              : 'الكاشير يعمل محلياً — المزامنة عند عودة الإنترنت')
         : (waiting > 0
-            ? '$waiting عمليات بانتظار المزامنة · آخر مزامنة: ${_relative(lastSyncAt)}'
-            : 'آخر مزامنة: ${_relative(lastSyncAt)}');
+              ? '$waiting عمليات بانتظار المزامنة · آخر مزامنة: ${_relative(lastSyncAt)}'
+              : 'آخر مزامنة: ${_relative(lastSyncAt)}');
 
     return Container(
       width: double.infinity,

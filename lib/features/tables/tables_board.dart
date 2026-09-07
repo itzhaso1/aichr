@@ -38,6 +38,11 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   PollingPosEventSource? _source;
   StreamSubscription<List<Map<String, dynamic>>>? _watchSub;
 
+  Map<String, dynamic> get _perms => CashierPermissions.resolve(
+    ref.read(cashierPermissionsProvider),
+    ref.read(authControllerProvider).valueOrNull?.permissions,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -60,20 +65,20 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     _watchSub?.cancel();
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) return;
-    _watchSub = ref.read(tablesRepositoryProvider).watchBoard(workspaceId).listen(
-      (tables) {
-        if (!mounted) return;
-        setState(() {
-          _tables = tables;
-          _loading = false;
-          _error = tables.isEmpty
-              ? (AppConfig.offlineOnly
+    _watchSub = ref.read(tablesRepositoryProvider).watchBoard(workspaceId).listen((
+      tables,
+    ) {
+      if (!mounted) return;
+      setState(() {
+        _tables = tables;
+        _loading = false;
+        _error = tables.isEmpty
+            ? (AppConfig.offlineOnly
                   ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
                   : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
-              : null;
-        });
-      },
-    );
+            : null;
+      });
+    });
   }
 
   Future<void> _startPolling() async {
@@ -136,8 +141,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       _loading = false;
       _error = next.isEmpty
           ? (AppConfig.offlineOnly
-              ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
-              : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
+                ? 'لا توجد طاولات بعد. اضغط «إضافة طاولة» بالأعلى.'
+                : 'لا توجد طاولات محفوظة محليًا. أكمل Initial Sync مرة واحدة وأنت متصل.')
           : null;
     });
   }
@@ -166,11 +171,17 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   }
 
   Future<void> _addTable() async {
+    if (!CashierPermissions.canCreateTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية إضافة طاولات.')),
+      );
+      return;
+    }
     final workspaceId = ref.read(workspaceIdProvider);
     if (workspaceId == null || workspaceId <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لا توجد مساحة عمل محددة.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('لا توجد مساحة عمل محددة.')));
       return;
     }
     final name = TextEditingController();
@@ -199,7 +210,9 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     name.dispose();
     if (ok != true || trimmed.isEmpty) return;
     try {
-      await ref.read(catalogAdminServiceProvider).createTable(
+      await ref
+          .read(catalogAdminServiceProvider)
+          .createTable(
             workspaceId: workspaceId,
             name: trimmed,
             permissions: CashierPermissions.resolve(
@@ -212,16 +225,162 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تمت إضافة «$trimmed».')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تمت إضافة «$trimmed».')));
     } catch (e) {
       if (!mounted) return;
       final message = e is PosException ? e.messageAr : '$e';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تعذر إضافة الطاولة: $message')));
+    }
+  }
+
+  Future<void> _renameTable(Map<String, dynamic> table) async {
+    if (!CashierPermissions.canEditTables(_perms)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر إضافة الطاولة: $message')),
+        const SnackBar(content: Text('لا تملك صلاحية تعديل الطاولات.')),
+      );
+      return;
+    }
+    final workspaceId = ref.read(workspaceIdProvider);
+    final localId = '${table['local_id'] ?? ''}'.trim();
+    if (workspaceId == null || localId.isEmpty) return;
+    final name = TextEditingController(text: '${table['name'] ?? ''}');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل الطاولة'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'اسم / رقم الطاولة'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = name.text.trim();
+    name.dispose();
+    if (ok != true || trimmed.isEmpty) return;
+    try {
+      await ref
+          .read(catalogAdminServiceProvider)
+          .updateTable(
+            workspaceId: workspaceId,
+            localId: localId,
+            name: trimmed,
+            permissions: _perms,
+          );
+      ref.invalidate(localTablesProvider);
+      ref.read(tablesRevisionProvider.notifier).state++;
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
       );
     }
+  }
+
+  Future<void> _deleteTable(Map<String, dynamic> table) async {
+    if (!CashierPermissions.canDeleteTables(_perms)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية حذف الطاولات.')),
+      );
+      return;
+    }
+    final workspaceId = ref.read(workspaceIdProvider);
+    final localId = '${table['local_id'] ?? ''}'.trim();
+    if (workspaceId == null || localId.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الطاولة'),
+        content: Text('سيتم حذف «${table['name'] ?? ''}».'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref
+          .read(catalogAdminServiceProvider)
+          .deleteTable(
+            workspaceId: workspaceId,
+            localId: localId,
+            permissions: _perms,
+          );
+      ref.invalidate(localTablesProvider);
+      ref.read(tablesRevisionProvider.notifier).state++;
+      if (!mounted) return;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is PosException ? e.messageAr : '$e')),
+      );
+    }
+  }
+
+  Future<void> _manageTables() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('إدارة الطاولات')),
+            for (final table in _tables)
+              ListTile(
+                title: Text('${table['name']}'),
+                subtitle: Text(
+                  PosLabels.tableStatus(table['status']?.toString()),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (CashierPermissions.canEditTables(_perms))
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          unawaited(_renameTable(table));
+                        },
+                      ),
+                    if (CashierPermissions.canDeleteTables(_perms))
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          unawaited(_deleteTable(table));
+                        },
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -259,71 +418,76 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     final crossAxis = width >= 1100
         ? 5
         : width >= 800
-            ? 4
-            : width >= 520
-                ? 3
-                : 2;
+        ? 4
+        : width >= 520
+        ? 3
+        : 2;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'الطاولات',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                    ),
-                    Text(
-                      'اضغط على الطاولة للدخول إلى تفاصيلها وعملياتها',
-                      style: TextStyle(fontSize: 11, color: HasimColors.muted),
-                    ),
-                  ],
-                ),
+              const Text(
+                'الطاولات',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      PosTap(
-                        onTap: _addTable,
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.add, color: HasimColors.brand),
-                              SizedBox(width: 4),
-                              Text(
-                                'إضافة طاولة',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  color: HasimColors.brand,
-                                ),
+              const Text(
+                'اضغط على الطاولة للدخول إلى تفاصيلها وعملياتها',
+                style: TextStyle(fontSize: 11, color: HasimColors.muted),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  if (CashierPermissions.canCreateTables(_perms))
+                    PosTap(
+                      onTap: _addTable,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add, color: HasimColors.brand),
+                            SizedBox(width: 4),
+                            Text(
+                              'إضافة طاولة',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: HasimColors.brand,
                               ),
-                            ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (CashierPermissions.canEditTables(_perms) ||
+                      CashierPermissions.canDeleteTables(_perms))
+                    PosTap(
+                      onTap: _manageTables,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text(
+                          'إدارة',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: HasimColors.ink,
                           ),
                         ),
                       ),
-                      PosTap(
-                        onTap: _load,
-                        child: const Padding(
-                          padding: EdgeInsets.all(8),
-                          child: Icon(Icons.refresh),
-                        ),
-                      ),
-                    ],
+                    ),
+                  PosTap(
+                    onTap: _load,
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.refresh),
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
@@ -334,14 +498,21 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   padding: const EdgeInsets.all(16),
                   child: HsEmpty(
                     title: 'لا توجد طاولات بعد.',
-                    subtitle: 'أضف طاولة من هنا أو من الإعدادات ثم اضغط حفظ.',
-                    actionLabel: 'إضافة طاولة',
-                    onAction: _addTable,
+                    subtitle: CashierPermissions.canCreateTables(_perms)
+                        ? 'أضف طاولة من هنا أو من الإعدادات ثم اضغط حفظ.'
+                        : 'اطلب من المدير إضافة الطاولات.',
+                    actionLabel: CashierPermissions.canCreateTables(_perms)
+                        ? 'إضافة طاولة'
+                        : null,
+                    onAction: CashierPermissions.canCreateTables(_perms)
+                        ? _addTable
+                        : null,
                   ),
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    final maxW = constraints.maxWidth.isFinite &&
+                    final maxW =
+                        constraints.maxWidth.isFinite &&
                             constraints.maxWidth > 0
                         ? constraints.maxWidth
                         : MediaQuery.sizeOf(context).width;
@@ -353,8 +524,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                       onRefresh: _load,
                       child: GridView.builder(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                        gridDelegate:
-                            SliverGridDelegateWithFixedCrossAxisCount(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: crossAxis,
                           mainAxisSpacing: 10,
                           crossAxisSpacing: 10,
@@ -375,8 +545,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
   }
 
   Widget _tableCard(Map<String, dynamic> table) {
-    final occupied = table['status'] == 'occupied' ||
-        table['session_open'] == true;
+    final occupied =
+        table['status'] == 'occupied' || table['session_open'] == true;
     final openedAt = parseOpenedAt(table['opened_at']);
     final total = asDoubleOr(table['total']);
     final orders = asIntOr(table['open_orders_count'] ?? table['orders_count']);
@@ -387,7 +557,7 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
     }
 
     return Material(
-      color: Colors.white,
+      color: HasimColors.surface,
       borderRadius: BorderRadius.circular(HasimRadius.md),
       clipBehavior: Clip.antiAlias,
       child: PosTap(
@@ -430,12 +600,8 @@ class _TablesBoardState extends ConsumerState<TablesBoard> {
                   ),
                   const SizedBox(height: 6),
                   occupied
-                      ? HsBadge.occupied(
-                          PosLabels.tableStatus('occupied'),
-                        )
-                      : HsBadge.available(
-                          PosLabels.tableStatus('available'),
-                        ),
+                      ? HsBadge.occupied(PosLabels.tableStatus('occupied'))
+                      : HsBadge.available(PosLabels.tableStatus('available')),
                   const SizedBox(height: 6),
                   occupied
                       ? OccupiedDurationLabel(

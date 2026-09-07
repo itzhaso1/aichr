@@ -97,7 +97,7 @@ void main() {
     );
     expect(
       CashierPermissions.canViewReports({'orders.manage': true}),
-      isTrue,
+      isFalse,
     );
     // Truthy encodings from serializers must still unlock reports.
     expect(
@@ -635,5 +635,38 @@ void main() {
     expect(CashierPermissions.canManageMenu(const {}), isFalse);
     expect(CashierPermissions.canManageTables(const {}), isFalse);
     expect(CashierPermissions.canViewReports(const {}), isFalse);
+  });
+
+  test('invoice and table mutations stay admin or explicit grants', () {
+    const cashier = {
+      'pos.use': true,
+      'orders.create': true,
+      'invoices.view': true,
+      'invoices.create': true,
+      'tables.view': true,
+    };
+    expect(CashierPermissions.canEditInvoices(cashier), isFalse);
+    expect(CashierPermissions.canDeleteInvoices(cashier), isFalse);
+    expect(CashierPermissions.canCreateTables(cashier), isFalse);
+    expect(CashierPermissions.canEditTables(cashier), isFalse);
+    expect(CashierPermissions.canDeleteTables(cashier), isFalse);
+    expect(CashierPermissions.canViewReports(cashier), isFalse);
+    expect(CashierPermissions.canUseKitchen(cashier), isFalse);
+    expect(
+      CashierPermissions.canDeleteInvoices({'invoices.delete': true}),
+      isTrue,
+    );
+    expect(
+      CashierPermissions.canCreateTables({'tables.create': true}),
+      isTrue,
+    );
+    expect(
+      CashierPermissions.canDeleteInvoices({'workspace.manage': true}),
+      isTrue,
+    );
+    expect(
+      CashierPermissions.canManageTables({'pos.manage': true}),
+      isFalse,
+    );
   });
 }

@@ -1,16 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api/cashier_api.dart';
-import '../../core/auth/auth_controller.dart';
 import '../../core/local_db/local_db_providers.dart';
 import '../../core/pos/application/pos_providers.dart';
-import '../../core/permissions/cashier_permissions.dart';
-import '../../core/permissions/permissions_provider.dart';
+import '../../core/pos/pos_errors.dart';
 import '../../core/theme/hasim_colors.dart';
+import '../../core/theme/hasim_radius.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 
 class DailyReportsPanel extends ConsumerStatefulWidget {
   const DailyReportsPanel({super.key, this.active = true});
@@ -28,37 +30,87 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   String? _error;
   var _forbidden = false;
   late DateTime _date;
+  Future<void>? _inflight;
+  var _pendingReload = false;
+  var _reloadScheduled = false;
+  var _invoiceFilter = 'all';
 
   @override
   void initState() {
     super.initState();
     _date = DateTime.now();
     // Defer to after first frame so providers are ready (avoids blank first paint).
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
-    });
+    _scheduleReload();
   }
 
   @override
   void didUpdateWidget(covariant DailyReportsPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.active && !oldWidget.active) {
-      _load();
+      _scheduleReload();
     }
   }
 
   String get _q => DateFormat('yyyy-MM-dd').format(_date);
 
+  void _scheduleReload() {
+    if (_reloadScheduled) return;
+    _reloadScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reloadScheduled = false;
+      if (mounted) unawaited(_load());
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (!mounted || picked == null) return;
+    setState(() => _date = picked);
+    await _load();
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-      _forbidden = false;
-    });
+    if (_inflight != null) {
+      _pendingReload = true;
+      return;
+    }
+    final run = _runLoad();
+    _inflight = run;
+    try {
+      await run;
+    } finally {
+      _inflight = null;
+      if (_pendingReload && mounted) {
+        _pendingReload = false;
+        await _load();
+      }
+    }
+  }
+
+  Future<void> _runLoad() async {
+    if (!mounted) return;
+    final showSpinner = _data == null;
+    if (showSpinner || _error != null || _forbidden) {
+      setState(() {
+        if (showSpinner) _loading = true;
+        _error = null;
+        _forbidden = false;
+      });
+    }
 
     final workspaceId = ref.read(workspaceIdProvider);
-    if (workspaceId == null || workspaceId <= 0) {
+    var resolvedWorkspace = workspaceId;
+    if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
+      final store = await ref.read(localAuthServiceProvider).anyStore();
+      resolvedWorkspace = store?.workspaceId;
+    }
+    if (resolvedWorkspace == null || resolvedWorkspace <= 0) {
       if (!mounted) return;
       setState(() {
         _loading = false;
@@ -72,12 +124,14 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       try {
         local = await ref
             .read(localReportsServiceProvider)
-            .daily(workspaceId: workspaceId, date: _date)
+            .daily(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
+      } on Forbidden {
+        rethrow;
       } catch (_) {
         local = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .buildDailyReport(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
       }
       final summary = asStringKeyedMap(local['summary']);
@@ -85,7 +139,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       if (invoiceRows.isEmpty && asIntOr(summary['invoices_count']) == 0) {
         final fromFinance = await ref
             .read(localFinanceRepositoryProvider)
-            .buildDailyReport(workspaceId: workspaceId, date: _date)
+            .buildDailyReport(workspaceId: resolvedWorkspace, date: _date)
             .timeout(const Duration(seconds: 5));
         final financeSummary = asStringKeyedMap(fromFinance['summary']);
         if (asMapList(fromFinance['invoices']).isNotEmpty ||
@@ -100,13 +154,17 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
         _loading = false;
         _error = null;
         _forbidden = false;
+        final keys = asMapList(local['invoices']).map(_invoiceKey).toSet();
+        if (_invoiceFilter != 'all' && !keys.contains(_invoiceFilter)) {
+          _invoiceFilter = 'all';
+        }
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _forbidden = false;
-        _error = 'تعذر تحميل التقرير المحلي: $e';
+        _forbidden = e is Forbidden;
+        _error = e is Forbidden ? null : 'تعذر تحميل التقرير المحلي: $e';
       });
     }
   }
@@ -115,32 +173,16 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
   Widget build(BuildContext context) {
     ref.listen<int?>(workspaceIdProvider, (prev, next) {
       if (next != prev && next != null && next > 0) {
-        _load();
+        _scheduleReload();
       }
     });
     ref.listen<int>(invoicesRevisionProvider, (prev, next) {
-      if (prev != next) _load();
-    });
-    ref.listen<Map<String, dynamic>>(cashierPermissionsProvider, (prev, next) {
-      final wasDenied = !CashierPermissions.canViewReports(
-        CashierPermissions.resolve(
-          prev,
-          ref.read(authControllerProvider).valueOrNull?.permissions,
-        ),
-      );
-      final nowAllowed = CashierPermissions.canViewReports(
-        CashierPermissions.resolve(
-          next,
-          ref.read(authControllerProvider).valueOrNull?.permissions,
-        ),
-      );
-      if (wasDenied && nowAllowed && _data == null && !_loading) {
-        _load();
-      }
+      if (prev != next) _scheduleReload();
     });
 
+    Widget body;
     if (_loading && _data == null) {
-      return const Center(
+      body = const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -153,20 +195,16 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           ],
         ),
       );
-    }
-
-    if (_forbidden) {
-      return const Padding(
+    } else if (_forbidden) {
+      body = const Padding(
         padding: EdgeInsets.all(16),
         child: HsEmpty(
           title: 'غير مصرح بعرض التقارير',
           subtitle: 'لا تملك صلاحية reports.view. تواصل مع مدير مساحة العمل.',
         ),
       );
-    }
-
-    if (_error != null) {
-      return Padding(
+    } else if (_error != null) {
+      body = Padding(
         padding: const EdgeInsets.all(16),
         child: HsEmpty(
           title: 'تعذر تحميل التقرير',
@@ -175,10 +213,8 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           onAction: _load,
         ),
       );
-    }
-
-    if (_data == null) {
-      return Padding(
+    } else if (_data == null) {
+      body = Padding(
         padding: const EdgeInsets.all(16),
         child: HsEmpty(
           title: 'لا توجد بيانات للعرض',
@@ -187,21 +223,25 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           onAction: _load,
         ),
       );
+    } else {
+      try {
+        body = _buildReportBody();
+      } catch (e) {
+        body = Padding(
+          padding: const EdgeInsets.all(16),
+          child: HsEmpty(
+            title: 'تعذر عرض التقرير',
+            subtitle: e.toString(),
+            actionLabel: 'إعادة المحاولة',
+            onAction: _load,
+          ),
+        );
+      }
     }
 
-    try {
-      return _buildReportBody();
-    } catch (e) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: HsEmpty(
-          title: 'تعذر عرض التقرير',
-          subtitle: e.toString(),
-          actionLabel: 'إعادة المحاولة',
-          onAction: _load,
-        ),
-      );
-    }
+    return SizedBox.expand(
+      child: ColoredBox(color: HasimColors.page, child: body),
+    );
   }
 
   Widget _buildReportBody() {
@@ -227,6 +267,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             children: [
               const Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -242,32 +283,39 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
                       'ملخص يومي من المبيعات والفواتير المحلية',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: HasimColors.muted,
-                      ),
+                      style: TextStyle(fontSize: 11, color: HasimColors.muted),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: OutlinedButton(
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: _date,
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime.now(),
-                      );
-                      if (picked == null) return;
-                      setState(() => _date = picked);
-                      await _load();
-                    },
-                    child: Text(_q),
+              PosTap(
+                onTap: _pickDate,
+                child: ConstrainedBox(
+                  key: const ValueKey('reports-date-chip'),
+                  constraints: const BoxConstraints(
+                    minWidth: 88,
+                    minHeight: 36,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: HasimColors.surface,
+                      borderRadius: BorderRadius.circular(HasimRadius.sm),
+                      border: Border.all(color: HasimColors.border),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Text(
+                        _q,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: HasimColors.ink,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -323,10 +371,7 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _metric(
-                '${_channelCount(summary, channels, 'table')}',
-                'طاولات',
-              ),
+              _metric('${_channelCount(summary, channels, 'table')}', 'طاولات'),
               _metric(
                 '${_channelCount(summary, channels, 'takeaway')}',
                 'خارجي',
@@ -417,13 +462,32 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
           const SizedBox(height: 8),
           if (invoices.isEmpty)
             const HsEmpty(title: 'لا توجد فواتير لهذا اليوم.')
-          else
-            for (final inv in invoices)
-              _rowCard(
-                '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
-                asDoubleOr(inv['total_amount']).toStringAsFixed(2),
-                highlight: true,
+          else ...[
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: HsSelectField(
+                valueLabel: _invoiceFilterLabel(invoices),
+                options: [
+                  (value: 'all', label: 'كل الفواتير'),
+                  for (final inv in invoices)
+                    (
+                      value: _invoiceKey(inv),
+                      label:
+                          '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
+                    ),
+                ],
+                onSelected: (value) => setState(() => _invoiceFilter = value),
               ),
+            ),
+            const SizedBox(height: 8),
+            HsSoftGrid(
+              minTileWidth: 300,
+              maxColumns: 3,
+              children: [
+                for (final inv in _visibleInvoices(invoices)) _invoiceTile(inv),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
           const Text(
             'الطلبات المغلقة',
@@ -507,76 +571,57 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
       ),
     ];
 
-    return LayoutBuilder(
-      builder: (context, c) {
-        final maxW = c.maxWidth.isFinite
-            ? c.maxWidth
-            : MediaQuery.sizeOf(context).width;
-        final cols = maxW >= 900
-            ? 4
-            : maxW >= 520
-            ? 2
-            : 1;
-        final width = cols == 1 ? maxW : (maxW - (8 * (cols - 1))) / cols;
-        final cardW = width.isFinite && width > 0 ? width : maxW;
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final card in cards)
-              SizedBox(
-                width: cardW,
-                child: HsCard(
-                  color: card.$4
-                      ? const Color(0xFFECFDF5)
-                      : HasimColors.surface,
-                  borderColor: card.$4
-                      ? const Color(0xFFA7F3D0)
-                      : HasimColors.border,
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        card.$1,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: card.$4
-                              ? HasimColors.ctaDark
-                              : HasimColors.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${card.$2}',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: card.$4
-                              ? const Color(0xFF065F46)
-                              : HasimColors.ink,
-                        ),
-                      ),
-                      Text(
-                        'مفتوحة الآن: ${card.$3}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: card.$4
-                              ? HasimColors.ctaDark
-                              : HasimColors.muted,
-                        ),
-                      ),
-                    ],
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final card in cards)
+          SizedBox(
+            width: 240,
+            child: HsCard(
+              color: card.$4 ? const Color(0xFFECFDF5) : HasimColors.surface,
+              borderColor: card.$4
+                  ? const Color(0xFFA7F3D0)
+                  : HasimColors.border,
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card.$1,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${card.$2}',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: card.$4
+                          ? const Color(0xFF065F46)
+                          : HasimColors.ink,
+                    ),
+                  ),
+                  Text(
+                    'مفتوحة الآن: ${card.$3}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: card.$4 ? HasimColors.ctaDark : HasimColors.muted,
+                    ),
+                  ),
+                ],
               ),
-          ],
-        );
-      },
+            ),
+          ),
+      ],
     );
   }
 
@@ -604,6 +649,60 @@ class _DailyReportsPanelState extends ConsumerState<DailyReportsPanel> {
     if (value == null) return '—';
     final s = value.toString().trim();
     return s.isEmpty ? '—' : s;
+  }
+
+  String _invoiceKey(Map<String, dynamic> inv) =>
+      'inv:${_str(inv['invoice_number'])}';
+
+  String _invoiceFilterLabel(List<Map<String, dynamic>> invoices) {
+    if (_invoiceFilter == 'all') return 'كل الفواتير';
+    for (final inv in invoices) {
+      if (_invoiceKey(inv) == _invoiceFilter) {
+        return _str(inv['invoice_number']);
+      }
+    }
+    return 'كل الفواتير';
+  }
+
+  List<Map<String, dynamic>> _visibleInvoices(
+    List<Map<String, dynamic>> invoices,
+  ) {
+    if (_invoiceFilter == 'all') return invoices;
+    return [
+      for (final inv in invoices)
+        if (_invoiceKey(inv) == _invoiceFilter) inv,
+    ];
+  }
+
+  Widget _invoiceTile(Map<String, dynamic> inv) {
+    return HsCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${_str(inv['invoice_number'])} · ${nestedName(inv['table'])}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              asDoubleOr(inv['total_amount']).toStringAsFixed(2),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: HasimColors.ctaDark,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _metric(String value, String label, {bool highlight = false}) {

@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../../local_db/app_database.dart';
+import '../pos_permissions.dart';
 
 /// Kitchen board reads/writes SQLite. Network is optional enrichment only.
 class KitchenLocalService {
@@ -83,7 +84,9 @@ class KitchenLocalService {
     required int workspaceId,
     required String orderLocalId,
     required String status,
+    Map<String, dynamic>? permissions,
   }) async {
+    PosPermissions.require(permissions, PosPermissions.kitchen);
     await (_db.update(_db.localOrders)..where(
           (t) =>
               t.localId.equals(orderLocalId) &

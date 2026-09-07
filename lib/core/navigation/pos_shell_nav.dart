@@ -11,6 +11,7 @@ enum PosShellTab {
   customers,
   items,
   reports,
+  users,
   sync,
   settings,
 }

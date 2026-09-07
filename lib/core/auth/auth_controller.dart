@@ -3,8 +3,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../api/cashier_api.dart';
 import '../config/app_config.dart';
+import '../local_db/app_database.dart';
 import '../offline/offline_store.dart';
 import '../permissions/permissions_provider.dart';
+import '../permissions/staff_permissions.dart';
 import '../pos/application/local_auth_service.dart';
 import '../pos/application/pos_providers.dart';
 import '../pos/pos_errors.dart';
@@ -38,6 +40,26 @@ class AuthSession {
 
   bool get isKitchenSession =>
       LocalAuthService.isKitchenRole(user['role']?.toString());
+
+  bool get canUsePos =>
+      StaffPermissions.can(permissions, StaffPermissions.posUse);
+
+  bool get canUseKitchen =>
+      StaffPermissions.can(permissions, StaffPermissions.kitchenUse);
+
+  bool get canViewReports =>
+      StaffPermissions.can(permissions, StaffPermissions.reportsView);
+
+  String get landingRoute {
+    if (canUseKitchen && (isKitchenSession || !canUsePos)) {
+      return '/kitchen';
+    }
+    if (canViewReports && !canUsePos) return '/reports';
+    if (canUsePos) return '/home';
+    if (canViewReports) return '/reports';
+    if (canUseKitchen) return '/kitchen';
+    return '/home';
+  }
 }
 
 class AuthRepository {
@@ -366,7 +388,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   Future<void> login(String emailOrPhone, String password) async {
     if (AppConfig.offlineOnly) {
       throw ApiException(
-        'التطبيق أوفلاين بالكامل — استخدم الدخول بـ PIN المحلي.',
+        'التطبيق أوفلاين بالكامل — استخدم الإيميل وكلمة المرور المحلية.',
       );
     }
     // Keep previous session visible during login attempt — avoid splash remount loop.
@@ -390,7 +412,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
   }) async {
     if (AppConfig.offlineOnly) {
       throw ApiException(
-        'التطبيق أوفلاين بالكامل — استخدم الدخول بـ PIN المحلي.',
+        'التطبيق أوفلاين بالكامل — استخدم الإيميل وكلمة المرور المحلية.',
       );
     }
     try {
@@ -443,7 +465,10 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
 
   Future<void> _applyStandaloneUser(dynamic user, dynamic store) async {
     final token = 'standalone:${user.localId}';
-    final permissions = LocalAuthService.permissionsFor(user.role as String);
+    final auth = _ref.read(localAuthServiceProvider);
+    final permissions = user is LocalUser
+        ? await auth.effectivePermissions(user)
+        : LocalAuthService.permissionsFor(user.role as String);
     _ref.read(currentLocalUserIdProvider.notifier).state =
         user.localId as String;
     _ref.read(currentStoreIdProvider.notifier).state = store.localId as String;
@@ -456,6 +481,7 @@ class AuthController extends StateNotifier<AsyncValue<AuthSession?>> {
         'id': user.localId,
         'name': user.name,
         'username': user.username,
+        'email': user.username,
         'role': user.role,
       },
       workspace: {

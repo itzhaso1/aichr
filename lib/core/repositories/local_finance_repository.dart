@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../local_db/app_database.dart';
 import '../pos/domain/pricing_service.dart';
+import '../pos/pos_permissions.dart';
 import '../util/json_numbers.dart';
 
 /// Local invoices + daily report aggregates from SQLite (offline-capable).
@@ -97,6 +98,47 @@ class LocalFinanceRepository {
         .getSingleOrNull();
     if (any == null) return null;
     return _invoiceToMap(any);
+  }
+
+  Future<void> updateInvoice({
+    required String localId,
+    Map<String, dynamic>? permissions,
+    String? notes,
+    String? status,
+  }) async {
+    PosPermissions.require(permissions, PosPermissions.invoicesEdit);
+    final row = await (_db.select(_db.localInvoices)
+          ..where((t) => t.localId.equals(localId)))
+        .getSingleOrNull();
+    if (row == null) return;
+    final payload = _safeMap(row.payloadJson);
+    if (notes != null) payload['notes'] = notes;
+    await (_db.update(_db.localInvoices)
+          ..where((t) => t.localId.equals(localId)))
+        .write(
+          LocalInvoicesCompanion(
+            status: status == null ? const Value.absent() : Value(status),
+            payloadJson: Value(jsonEncode(payload)),
+          ),
+        );
+  }
+
+  Future<void> deleteInvoice({
+    required String localId,
+    Map<String, dynamic>? permissions,
+  }) async {
+    PosPermissions.require(permissions, PosPermissions.invoicesDelete);
+    await _db.transaction(() async {
+      await (_db.delete(_db.localPayments)
+            ..where((t) => t.invoiceLocalId.equals(localId)))
+          .go();
+      await (_db.delete(_db.localReturns)
+            ..where((t) => t.invoiceLocalId.equals(localId)))
+          .go();
+      await (_db.delete(_db.localInvoices)
+            ..where((t) => t.localId.equals(localId)))
+          .go();
+    });
   }
 
   Future<Map<String, dynamic>?> getInvoiceByServerId({
@@ -335,6 +377,7 @@ class LocalFinanceRepository {
       'items': items,
       if (tableOut != null) 'table': tableOut,
       'store_name': payload['store_name']?.toString(),
+      'notes': payload['notes']?.toString(),
       'sync_status': row.syncStatus,
       'is_local': row.serverId == null,
       'status': row.status,

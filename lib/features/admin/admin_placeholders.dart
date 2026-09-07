@@ -15,6 +15,7 @@ import '../../core/pos/pos_mode.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/util/json_numbers.dart';
 import '../../core/widgets/hasim_widgets.dart';
+import '../../core/widgets/pos_tap.dart';
 import '../cart/cart_controller.dart';
 
 /// Catalog admin — CRUD via `/api/cashier/v1/catalog/*` when `menu.manage`.
@@ -460,27 +461,16 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                SizedBox(
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _editCategory(),
-                    icon: const Icon(Icons.create_new_folder_outlined),
-                    label: const Text(
-                      '+ إضافة تصنيف',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
+                HsActionChip(
+                  label: '+ إضافة تصنيف',
+                  icon: Icons.create_new_folder_outlined,
+                  onTap: () => _editCategory(),
                 ),
-                SizedBox(
-                  height: 48,
-                  child: FilledButton.icon(
-                    onPressed: () => _editItem(),
-                    icon: const Icon(Icons.add),
-                    label: const Text(
-                      '+ إضافة منتج',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
+                HsActionChip(
+                  label: '+ إضافة منتج',
+                  icon: Icons.add,
+                  selected: true,
+                  onTap: () => _editItem(),
                 ),
               ],
             ),
@@ -492,9 +482,12 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
             decoration: InputDecoration(
               hintText: 'بحث…',
               isDense: true,
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.search),
-                onPressed: _load,
+              suffixIcon: PosTap(
+                onTap: _load,
+                child: const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: Icon(Icons.search),
+                ),
               ),
             ),
           ),
@@ -507,109 +500,128 @@ class _ItemsAdminPanelState extends ConsumerState<ItemsAdminPanel> {
           if (_categories.isEmpty)
             const HsEmpty(title: 'لا توجد تصنيفات.')
           else
-            for (final c in _categories)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: HsCard(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${c['name']}${c['is_active'] == false ? ' (معطّل)' : ''}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      if (canManage) ...[
-                        IconButton(
-                          onPressed: () => _editCategory(existing: c),
-                          icon: const Icon(Icons.edit_outlined, size: 20),
-                        ),
-                        IconButton(
-                          onPressed: () => _deleteCategory(c),
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: HasimColors.danger,
+            HsSoftGrid(
+              minTileWidth: 260,
+              maxColumns: 3,
+              children: [
+                for (final c in _categories)
+                  HsCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${c['name']}${c['is_active'] == false ? ' (معطّل)' : ''}',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
+                        if (canManage) ...[
+                          PosTap(
+                            onTap: () => _editCategory(existing: c),
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(Icons.edit_outlined, size: 20),
+                            ),
+                          ),
+                          PosTap(
+                            onTap: () => _deleteCategory(c),
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: HasimColors.danger,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ),
+              ],
+            ),
           const SizedBox(height: 16),
           const Text('الأصناف', style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
           if (_items.isEmpty)
             const HsEmpty(title: 'لا توجد أصناف.')
           else
-            for (final item in _items)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: HsCard(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      LocalProductImage(
-                        path: '${item['image_path'] ?? ''}'.trim().isEmpty
-                            ? null
-                            : '${item['image_path']}',
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${item['name']}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
+            HsSoftGrid(
+              minTileWidth: 280,
+              maxColumns: 3,
+              children: [
+                for (final item in _items)
+                  HsCard(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        LocalProductImage(
+                          path: '${item['image_path'] ?? ''}'.trim().isEmpty
+                              ? null
+                              : '${item['image_path']}',
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${item['name']}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                            ),
-                            Text(
-                              [
-                                if (item['sku'] != null) 'SKU: ${item['sku']}',
-                                if (item['barcode'] != null)
-                                  'BC: ${item['barcode']}',
-                                item['is_active'] == false ? 'معطّل' : 'نشط',
-                              ].where((e) => e.isNotEmpty).join(' · '),
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: HasimColors.muted,
+                              Text(
+                                [
+                                  if (item['sku'] != null)
+                                    'SKU: ${item['sku']}',
+                                  if (item['barcode'] != null)
+                                    'BC: ${item['barcode']}',
+                                  item['is_active'] == false ? 'معطّل' : 'نشط',
+                                ].where((e) => e.isNotEmpty).join(' · '),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: HasimColors.muted,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Text(
-                        asDoubleOr(item['price']).toStringAsFixed(2),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: HasimColors.ctaDark,
-                        ),
-                      ),
-                      if (canManage) ...[
-                        IconButton(
-                          onPressed: () => _editItem(existing: item),
-                          icon: const Icon(Icons.edit_outlined, size: 20),
-                        ),
-                        IconButton(
-                          onPressed: () => _deleteItem(item),
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: HasimColors.danger,
+                            ],
                           ),
                         ),
+                        Text(
+                          asDoubleOr(item['price']).toStringAsFixed(2),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: HasimColors.ctaDark,
+                          ),
+                        ),
+                        if (canManage) ...[
+                          PosTap(
+                            onTap: () => _editItem(existing: item),
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(Icons.edit_outlined, size: 20),
+                            ),
+                          ),
+                          PosTap(
+                            onTap: () => _deleteItem(item),
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: HasimColors.danger,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-              ),
+              ],
+            ),
         ],
       ),
     );

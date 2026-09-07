@@ -5,20 +5,18 @@ import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_controller.dart';
 import '../../core/theme/hasim_colors.dart';
 import '../../core/widgets/hasim_widgets.dart';
-import 'kitchen_board.dart';
+import 'daily_reports_panel.dart';
 
-/// Isolated chef station — reachable from login without cashier credentials.
-class KitchenStationScreen extends ConsumerWidget {
-  const KitchenStationScreen({super.key});
+/// Isolated reports station — reachable from login under the kitchen entry.
+class ReportsStationScreen extends ConsumerWidget {
+  const ReportsStationScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final chefName = ref.watch(
-      authControllerProvider.select((s) {
-        final session = s.valueOrNull;
-        if (session == null || !session.isKitchenSession) return null;
-        return session.userName;
-      }),
+    // Select primitives only so auth loading/rebuilds do not recreate AppBar
+    // InkWell/MouseRegion annotations under a live Windows cursor.
+    final userName = ref.watch(
+      authControllerProvider.select((s) => s.valueOrNull?.userName),
     );
     final canUsePos = ref.watch(
       authControllerProvider.select(
@@ -27,18 +25,18 @@ class KitchenStationScreen extends ConsumerWidget {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: HasimColors.page,
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('المطبخ'),
+            const Text('التقارير'),
             Text(
-              chefName == null || chefName.isEmpty
-                  ? 'محطة الشيف — طلبات التجهيز فقط'
-                  : 'شيف: $chefName',
+              userName == null || userName.isEmpty
+                  ? 'محطة التقارير — ملخص المبيعات المحلية'
+                  : 'مرحباً $userName',
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -49,8 +47,8 @@ class KitchenStationScreen extends ConsumerWidget {
         ),
         actions: [
           HsTextAction(
-            label: 'التقارير',
-            onTap: () => context.go('/reports'),
+            label: 'المطبخ',
+            onTap: () => context.go('/kitchen'),
           ),
           if (canUsePos)
             HsTextAction(
@@ -71,7 +69,7 @@ class KitchenStationScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: const KitchenBoard(),
+      body: const SizedBox.expand(child: DailyReportsPanel()),
     );
   }
 }

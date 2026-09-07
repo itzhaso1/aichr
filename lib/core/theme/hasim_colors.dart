@@ -11,9 +11,9 @@ abstract final class HasimColors {
   static const Color ink = Color(0xFF0F172A);
   static const Color muted = Color(0xFF64748B);
   static const Color border = Color(0xFFE2E8F0);
-  static const Color page = Color(0xFFF1F5F9);
-  static const Color surface = Color(0xFFFFFFFF);
-  static const Color surfaceSoft = Color(0xFFF8FAFC);
+  static const Color page = Color(0xFFE6EBF1);
+  static const Color surface = Color(0xFFF4F6F8);
+  static const Color surfaceSoft = Color(0xFFEEF1F4);
 
   static const Color danger = Color(0xFFDC2626);
   static const Color dangerSoft = Color(0xFFFFF1F2);

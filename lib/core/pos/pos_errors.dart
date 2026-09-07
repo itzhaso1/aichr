@@ -53,7 +53,8 @@ class SyncFailure extends PosException {
 }
 
 class InvalidPin extends PosException {
-  const InvalidPin() : super('InvalidPin', 'رمز PIN غير صحيح.');
+  const InvalidPin()
+      : super('InvalidPin', 'الإيميل أو كلمة المرور غير صحيحة.');
 }
 
 class StoreNotFound extends PosException {

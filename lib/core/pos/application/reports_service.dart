@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../../local_db/app_database.dart';
 import '../domain/pricing_service.dart';
+import '../pos_permissions.dart';
 
 class LocalReportsService {
   LocalReportsService(this._db);
@@ -15,7 +16,11 @@ class LocalReportsService {
   Future<Map<String, dynamic>> daily({
     required int workspaceId,
     required DateTime date,
+    Map<String, dynamic>? permissions,
   }) async {
+    if (permissions != null) {
+      PosPermissions.require(permissions, PosPermissions.reports);
+    }
     if (workspaceId <= 0) {
       return _empty(date);
     }
